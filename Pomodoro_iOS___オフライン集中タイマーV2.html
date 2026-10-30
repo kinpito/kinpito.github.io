@@ -1,0 +1,2537 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Pomodoro iOS" />
+  <meta name="theme-color" content="#090b10" />
+  <title>Pomodoro iOS — オフライン集中タイマー</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+JP:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Physical iPhone Dynamic Island & Notch clearance: minimum 58px on standalone iOS + adjustable offset */
+      --safe-top: max(env(safe-area-inset-top, 58px), 58px);
+      --safe-bottom: max(env(safe-area-inset-bottom, 22px), 22px);
+      --extra-top-offset: 6px;
+      --ios-spring: cubic-bezier(0.22, 1, 0.36, 1);
+      --ios-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+      --ios-fluid: cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    input, textarea, select {
+      user-select: text;
+    }
+    body {
+      font-family: 'Inter', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #090b10;
+      color: #f8fafc;
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Safe-area aware header & footer so hardware Dynamic Island NEVER blocks buttons */
+    .safe-top-header {
+      padding-top: calc(var(--safe-top) + var(--extra-top-offset));
+      transition: padding-top 0.45s var(--ios-spring);
+    }
+    .safe-bottom-nav {
+      padding-bottom: var(--safe-bottom);
+    }
+
+    /* Glassmorphism with hardware-accelerated compositing */
+    .ios-glass {
+      background: rgba(20, 24, 38, 0.72);
+      backdrop-filter: blur(28px) saturate(190%);
+      -webkit-backdrop-filter: blur(28px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
+      transform: translateZ(0);
+    }
+    .ios-glass-light {
+      background: rgba(255, 255, 255, 0.09);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      transform: translateZ(0);
+    }
+    .ios-card {
+      background: rgba(16, 20, 32, 0.76);
+      backdrop-filter: blur(26px) saturate(185%);
+      -webkit-backdrop-filter: blur(26px) saturate(185%);
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      border-radius: 24px;
+      box-shadow: 0 16px 38px -12px rgba(0, 0, 0, 0.55), inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+      transition: transform 0.45s var(--ios-spring), background-color 0.35s ease, border-color 0.35s ease, box-shadow 0.45s var(--ios-spring);
+      transform: translateZ(0);
+    }
+
+    /* Silky iOS pressable button physics */
+    button, .ios-pressable {
+      transition: transform 0.38s var(--ios-bounce), background-color 0.25s ease, border-color 0.25s ease, opacity 0.25s ease, box-shadow 0.35s var(--ios-spring);
+      will-change: transform;
+    }
+    button:active, .ios-pressable:active {
+      transform: scale(0.94) translateZ(0) !important;
+    }
+
+    /* Liquid Morphing Dynamic Island */
+    .dynamic-island {
+      transition: all 0.55s var(--ios-bounce), box-shadow 0.45s var(--ios-spring);
+      will-change: transform, width, border-radius;
+      box-shadow: 0 12px 32px -6px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.14);
+    }
+    .dynamic-island:hover {
+      transform: scale(1.025) translateZ(0);
+    }
+    .island-expanded-drawer {
+      transition: max-height 0.58s var(--ios-spring), opacity 0.42s var(--ios-fluid), transform 0.58s var(--ios-bounce), margin-top 0.45s var(--ios-spring);
+      transform-origin: top center;
+      overflow: hidden;
+      will-change: max-height, opacity, transform;
+    }
+    .island-drawer-collapsed {
+      max-height: 0px !important;
+      opacity: 0 !important;
+      transform: scale(0.86) translateY(-14px) translateZ(0) !important;
+      margin-top: 0px !important;
+      pointer-events: none !important;
+      border-width: 0px !important;
+      padding-top: 0px !important;
+      padding-bottom: 0px !important;
+    }
+    .island-drawer-open {
+      max-height: 220px !important;
+      opacity: 1 !important;
+      transform: scale(1) translateY(0) translateZ(0) !important;
+      margin-top: 10px !important;
+      pointer-events: auto !important;
+    }
+
+    /* 60fps Sub-second Smooth Ring */
+    .progress-ring-circle {
+      transform: rotate(-90deg);
+      transform-origin: 50% 50%;
+      transition: stroke 0.5s ease;
+      will-change: stroke-dashoffset;
+      filter: drop-shadow(0 0 10px rgba(244, 63, 94, 0.45));
+    }
+
+    /* iOS View Page Spring Transitions */
+    .ios-tab-view {
+      animation: iosViewSpringIn 0.52s var(--ios-spring) forwards;
+      will-change: transform, opacity;
+    }
+    @keyframes iosViewSpringIn {
+      0% {
+        opacity: 0;
+        transform: translateY(18px) scale(0.965) translateZ(0);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1) translateZ(0);
+      }
+    }
+
+    /* Digit Roll Animation for Countdown Clock */
+    .digit-slot {
+      display: inline-block;
+      transition: transform 0.36s var(--ios-bounce), color 0.3s ease;
+      will-change: transform;
+    }
+    .digit-pop {
+      animation: digitSpringPop 0.38s var(--ios-bounce);
+    }
+    @keyframes digitSpringPop {
+      0% {
+        transform: translateY(6px) scale(0.92);
+        opacity: 0.72;
+      }
+      60% {
+        transform: translateY(-2px) scale(1.035);
+        opacity: 1;
+      }
+      100% {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+      }
+    }
+
+    /* Bottom Tab Bar Active Sliding Pill */
+    #tabSlidingPill {
+      transition: transform 0.52s var(--ios-bounce), width 0.45s var(--ios-spring);
+      will-change: transform;
+    }
+
+    /* Equalizer Bars */
+    @keyframes eq-bar {
+      0%, 100% { height: 4px; }
+      50% { height: 15px; }
+    }
+    .eq-1 { animation: eq-bar 0.65s infinite ease-in-out; }
+    .eq-2 { animation: eq-bar 0.48s infinite ease-in-out 0.15s; }
+    .eq-3 { animation: eq-bar 0.75s infinite ease-in-out 0.3s; }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between relative selection:bg-rose-500 selection:text-white">
+
+  <!-- Hidden Media Elements for Real iPhone Dynamic Island (Now Playing) & Home Screen Picture-in-Picture -->
+  <audio id="iosBgAudioElement" loop playsinline class="hidden"></audio>
+  <video id="pipVideoElement" playsinline muted class="fixed -top-96 -left-96 w-10 h-10 opacity-0 pointer-events-none"></video>
+
+  <!-- Living Background Canvas & Custom Photo Layer -->
+  <div class="fixed inset-0 z-0 pointer-events-none overflow-hidden">
+    <div id="customBgLayer" class="absolute inset-0 bg-cover bg-center transition-opacity duration-700 opacity-0"></div>
+    <canvas id="livingBgCanvas" class="w-full h-full block"></canvas>
+    <div id="bgDimOverlay" class="absolute inset-0 bg-gradient-to-b from-slate-950/60 via-slate-950/40 to-slate-950/85 transition-opacity duration-500"></div>
+  </div>
+
+  <!-- Top iOS Header with Physical Dynamic Island Safe Area Clearance -->
+  <header id="appSafeHeader" class="safe-top-header relative z-30 px-4 max-w-4xl w-full mx-auto flex flex-col items-center">
+    
+    <!-- Top Utility Bar (Placed cleanly below hardware Dynamic Island) -->
+    <div class="w-full flex items-center justify-between text-xs font-semibold text-white/85 px-1 mb-2 gap-1.5 flex-wrap">
+      <div class="flex items-center gap-2">
+        <span id="iosStatusClock" class="font-mono text-white/90">09:41</span>
+        <span id="liveIslandSyncBadge" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 shadow-sm">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span>アイランド連動待機</span>
+        </span>
+      </div>
+
+      <div class="flex items-center gap-1.5">
+        <button id="btnPipLiveToggle" type="button" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-500/25 hover:bg-rose-500/40 text-rose-200 border border-rose-400/40 shadow-sm" title="ホーム画面に戻ってもライブタイマーを表示">
+          <span>📲 ホーム画面ライブ表示</span>
+        </button>
+        <button id="btnDeviceFrameToggle" type="button" class="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] bg-white/10 hover:bg-white/20 text-white/90" title="表示切替">
+          <span id="deviceFrameLabel">📱 iPhone枠: 自動</span>
+        </button>
+        <button id="btnStandbyOpen" type="button" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] bg-white/10 hover:bg-white/20 text-amber-200" title="iOSスタンバイ（常時表示）">
+          <span>🌙 スタンバイ表示</span>
+        </button>
+        <div class="flex items-center gap-1 text-white/80 px-1" title="オーディオエンジン状態">
+          <span id="audioStatusBadge" class="text-[11px] text-white/60">🔇 音OFF</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- In-App Interactive Dynamic Island Dock (Positioned safely below physical cutout) -->
+    <div id="dynamicIsland" role="button" tabindex="0" aria-label="ダイナミックアイランドを展開" class="dynamic-island cursor-pointer bg-black/90 backdrop-blur-2xl rounded-full px-5 py-2.5 flex items-center justify-between gap-5 min-w-[250px] max-w-[390px] w-auto">
+      <div class="flex items-center gap-2.5">
+        <div id="islandDot" class="w-2.5 h-2.5 rounded-full bg-rose-500 transition-colors duration-300"></div>
+        <span id="islandModeText" class="text-xs font-bold tracking-tight text-white/95">集中セッション</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="islandTimerText" class="font-mono text-xs font-extrabold text-rose-400">25:00</span>
+        <div id="islandEq" class="hidden items-end gap-0.5 h-3.5">
+          <span class="w-0.5 bg-amber-400 rounded-full eq-1"></span>
+          <span class="w-0.5 bg-rose-400 rounded-full eq-2"></span>
+          <span class="w-0.5 bg-sky-400 rounded-full eq-3"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Liquid-Animated Expanded Dynamic Island Live Activity Card -->
+    <div id="dynamicIslandExpanded" class="island-expanded-drawer island-drawer-collapsed w-full max-w-md bg-black/90 backdrop-blur-3xl border border-white/20 rounded-3xl px-5 py-4 shadow-2xl">
+      <div class="flex items-center justify-between mb-2.5">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-rose-500/25 text-rose-300 border border-rose-500/35 shrink-0">iOS Live Activity</span>
+          <span id="islandActiveTask" class="text-xs text-white/85 font-medium truncate">タスク未選択</span>
+        </div>
+        <button id="btnIslandCollapse" type="button" class="text-xs text-white/60 hover:text-white px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/15 shrink-0">閉じる ✕</button>
+      </div>
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <div id="islandBigTime" class="text-3xl font-black font-mono tracking-tight text-white">25:00</div>
+          <div id="islandCycleStatus" class="text-[11px] text-white/60 mt-0.5">サイクル 1 / 4 ・ ホーム画面アイランド同期ON</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btnIslandToggleTimer" type="button" class="px-4 py-2 rounded-full text-xs font-extrabold bg-gradient-to-r from-rose-500 to-orange-500 text-white shadow-lg shadow-rose-500/25">開始</button>
+          <button id="btnIslandPipBtn" type="button" class="px-3 py-2 rounded-full bg-white/10 hover:bg-white/20 text-rose-200 text-xs font-bold" title="ミニウィンドウ(PiP)でホーム画面に表示">📲 PiP</button>
+          <button id="btnIslandSkip" type="button" class="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white/85 text-xs" title="次のセッションへ">⏭</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main id="appMainContainer" class="relative z-20 flex-1 w-full max-w-2xl mx-auto px-4 pt-3 pb-32 flex flex-col justify-between">
+
+    <!-- ==================== TAB 1: TIMER VIEW ==================== -->
+    <section id="view-timer" class="ios-tab-view flex-1 flex flex-col justify-between gap-3.5">
+      
+      <!-- Top Cycle Counters (集中 0 小休憩 0 長い休憩 0) -->
+      <div class="grid grid-cols-3 gap-2.5">
+        <button type="button" data-mode="focus" class="mode-switch-btn ios-glass rounded-2xl p-2.5 flex flex-col items-center justify-center border-rose-400/60 bg-rose-500/20">
+          <div class="text-[11px] font-semibold text-white/80">集中</div>
+          <div class="flex items-baseline gap-1 mt-0.5">
+            <span id="countFocus" class="text-lg font-extrabold text-white">0</span>
+            <span class="text-[10px] text-white/50">回</span>
+          </div>
+        </button>
+        <button type="button" data-mode="shortBreak" class="mode-switch-btn ios-glass rounded-2xl p-2.5 flex flex-col items-center justify-center hover:bg-white/10">
+          <div class="text-[11px] font-semibold text-white/80">小休憩</div>
+          <div class="flex items-baseline gap-1 mt-0.5">
+            <span id="countShortBreak" class="text-lg font-extrabold text-white">0</span>
+            <span class="text-[10px] text-white/50">回</span>
+          </div>
+        </button>
+        <button type="button" data-mode="longBreak" class="mode-switch-btn ios-glass rounded-2xl p-2.5 flex flex-col items-center justify-center hover:bg-white/10">
+          <div class="text-[11px] font-semibold text-white/80">長い休憩</div>
+          <div class="flex items-baseline gap-1 mt-0.5">
+            <span id="countLongBreak" class="text-lg font-extrabold text-white">0</span>
+            <span class="text-[10px] text-white/50">回</span>
+          </div>
+        </button>
+      </div>
+
+      <!-- Center 60fps Fluid Circular Timer Ring -->
+      <div class="flex flex-col items-center justify-center my-auto py-1">
+        <div class="relative w-64 h-64 sm:w-72 sm:h-72 flex items-center justify-center">
+          <!-- Ambient Glow Halo behind ring -->
+          <div id="ringAmbientHalo" class="absolute inset-6 rounded-full bg-rose-500/15 blur-2xl transition-all duration-700 pointer-events-none"></div>
+
+          <svg class="w-full h-full relative z-10" viewBox="0 0 260 260">
+            <!-- Background track -->
+            <circle cx="130" cy="130" r="114" stroke="rgba(255,255,255,0.10)" stroke-width="10" fill="rgba(14, 17, 28, 0.52)" />
+            <!-- 60fps Smooth Progress ring -->
+            <circle id="timerRingCircle" class="progress-ring-circle" cx="130" cy="130" r="114" stroke="#f43f5e" stroke-width="10" stroke-linecap="round" fill="transparent" stroke-dasharray="716.28" stroke-dashoffset="0" />
+          </svg>
+
+          <!-- Inside Ring Content -->
+          <div class="absolute inset-0 z-20 flex flex-col items-center justify-center text-center px-6">
+            <div id="sessionLabelBadge" class="px-3 py-0.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-200 border border-rose-400/30 mb-1 transition-all duration-500">
+              集中セッション
+            </div>
+
+            <!-- Rolling Digit Clock Display -->
+            <div id="mainTimerDisplay" class="text-6xl sm:text-7xl font-black font-mono tracking-tight text-white drop-shadow flex items-center justify-center">
+              25:00
+            </div>
+
+            <!-- 4-Sprint Dots Indicator -->
+            <div class="flex items-center gap-2 mt-3" title="4回の集中スプリントで長い休憩へ">
+              <span id="sprintDot0" class="w-2.5 h-2.5 rounded-full bg-rose-400 ring-4 ring-rose-500/20 transition-all duration-500"></span>
+              <span id="sprintDot1" class="w-2.5 h-2.5 rounded-full bg-white/25 transition-all duration-500"></span>
+              <span id="sprintDot2" class="w-2.5 h-2.5 rounded-full bg-white/25 transition-all duration-500"></span>
+              <span id="sprintDot3" class="w-2.5 h-2.5 rounded-full bg-white/25 transition-all duration-500"></span>
+              <span id="sprintStepLabel" class="text-[11px] text-white/60 ml-1 font-semibold">1/4</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Motivational Quote -->
+        <button id="btnNextQuote" type="button" class="mt-1.5 max-w-md text-center group px-3 py-1 rounded-xl hover:bg-white/5" title="タップして名言を切り替え">
+          <p id="quoteText" class="text-xs sm:text-sm text-white/80 italic font-medium transition-opacity duration-300">「前へ進む秘訣は、まず始めることです。」</p>
+        </button>
+      </div>
+
+      <!-- Focused Task Banner (ついてくるタスク) -->
+      <div class="ios-card p-3.5 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="w-10 h-10 rounded-2xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-300 shrink-0 font-bold text-base shadow-inner">
+            🎯
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-rose-300">集中中のタスク</span>
+              <span id="focusedTaskProjectBadge" class="hidden text-[10px] px-2 py-0.5 rounded-md bg-white/10 text-white/75"></span>
+            </div>
+            <div id="focusedTaskTitle" class="text-sm font-bold text-white truncate">タスクを選択して時間を自動記録</div>
+            <div id="focusedTaskTimeInfo" class="text-[11px] text-white/60">累計記録: 0分00秒</div>
+          </div>
+        </div>
+        <button id="btnJumpToTasks" type="button" class="shrink-0 px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-white">
+          変更 →
+        </button>
+      </div>
+
+      <!-- Primary Timer Controls & Quick Ambient Sound Bar -->
+      <div class="flex items-center justify-center gap-3">
+        <button id="btnResetTimer" type="button" class="w-12 h-12 rounded-2xl ios-glass flex items-center justify-center text-white/85 hover:text-white hover:bg-white/15 text-lg" title="リセット">
+          ↺
+        </button>
+
+        <button id="btnStartPause" type="button" class="flex-1 max-w-[230px] h-14 rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-400 hover:to-orange-400 text-white font-extrabold text-base tracking-wide shadow-xl shadow-rose-500/30 flex items-center justify-center gap-2">
+          <span id="startPauseIcon">▶</span>
+          <span id="startPauseText">開始</span>
+        </button>
+
+        <button id="btnQuickBgmToggle" type="button" class="h-12 px-3.5 rounded-2xl ios-glass flex items-center gap-2 text-xs font-bold text-white/90 hover:bg-white/15" title="環境音・BGMのON/OFF">
+          <span id="quickBgmIcon">🎵</span>
+          <span id="quickBgmLabel" class="hidden sm:inline">環境音</span>
+        </button>
+
+        <button id="btnSkipSession" type="button" class="w-12 h-12 rounded-2xl ios-glass flex items-center justify-center text-white/85 hover:text-white hover:bg-white/15 text-base" title="次のフェーズへスキップ">
+          ⏭
+        </button>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 2: TASKS VIEW (ついてくるタスク & 階層時間記録) ==================== -->
+    <section id="view-tasks" class="ios-tab-view hidden flex-1 flex flex-col gap-4">
+      <div class="ios-card p-4">
+        <div class="flex items-center justify-between mb-2">
+          <div>
+            <h2 class="text-base font-bold text-white">ついてくるタスク & 時間自動集計</h2>
+            <p class="text-xs text-white/65">集中中に指定したタスクへ秒単位で自動加算され、親プロジェクトへ合計時間が積み上がります。</p>
+          </div>
+          <div class="text-right">
+            <span class="text-[11px] text-white/50 block">本日の総集中時間</span>
+            <span id="tasksTotalTrackedToday" class="text-sm font-extrabold text-rose-400 font-mono">0分</span>
+          </div>
+        </div>
+
+        <!-- Add Task / Subtask Form -->
+        <form id="formAddTask" class="mt-3 flex flex-col sm:flex-row gap-2">
+          <input id="inputTaskTitle" type="text" required placeholder="新しいタスクまたはサブタスクを入力..." class="flex-1 px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/15 text-sm text-white placeholder-white/40 focus:outline-none focus:border-rose-400 transition" />
+          <div class="flex gap-2">
+            <select id="selectParentTask" class="px-3 py-2.5 rounded-xl bg-black/40 border border-white/15 text-xs text-white/90 focus:outline-none focus:border-rose-400">
+              <option value="">親プロジェクトなし（メイン）</option>
+            </select>
+            <input id="inputTaskEst" type="number" min="1" max="20" value="2" class="w-16 px-2.5 py-2.5 rounded-xl bg-black/40 border border-white/15 text-xs text-center text-white" title="見積もりポモドーロ数" />
+            <button type="submit" class="px-4 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-bold text-xs shrink-0">
+              ＋ 追加
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Filter Bar -->
+      <div class="flex items-center justify-between px-1">
+        <div class="flex gap-1.5">
+          <button type="button" data-task-filter="all" class="task-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-white/20 text-white">すべて</button>
+          <button type="button" data-task-filter="active" class="task-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-white/5 text-white/70 hover:bg-white/10">未完了</button>
+          <button type="button" data-task-filter="completed" class="task-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-white/5 text-white/70 hover:bg-white/10">完了済み</button>
+        </div>
+        <button id="btnClearCompletedTasks" type="button" class="text-xs text-white/50 hover:text-rose-300">完了済みを整理</button>
+      </div>
+
+      <!-- Hierarchical Task List Container -->
+      <div id="taskListContainer" class="flex flex-col gap-2.5 overflow-y-auto max-h-[50vh] pr-1"></div>
+    </section>
+
+    <!-- ==================== TAB 3: STREAK & REWARDS (毎日のストリーク・チャレンジとごほうび) ==================== -->
+    <section id="view-rewards" class="ios-tab-view hidden flex-1 flex flex-col gap-4 overflow-y-auto max-h-[72vh] pr-1">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="ios-card p-4 flex items-center justify-between">
+          <div>
+            <span class="text-xs font-semibold text-amber-300 uppercase tracking-wider">🔥 毎日のストリーク</span>
+            <div class="flex items-baseline gap-1.5 mt-1">
+              <span id="streakDaysCount" class="text-4xl font-extrabold text-white">1</span>
+              <span class="text-xs text-white/70 font-semibold">日連続</span>
+            </div>
+            <p class="text-[11px] text-white/60 mt-1">毎日姿を見せて、ストリークが伸びるのを見守りましょう。</p>
+          </div>
+          <div class="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-3xl">
+            🔥
+          </div>
+        </div>
+
+        <div class="ios-card p-4 flex flex-col justify-between">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-rose-300">🎯 今日の集中目標</span>
+            <div class="flex items-center gap-1">
+              <button id="btnGoalDec" type="button" class="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-bold">−</button>
+              <span id="dailyGoalTargetText" class="text-xs font-bold px-1.5">4回</span>
+              <button id="btnGoalInc" type="button" class="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-bold">＋</button>
+            </div>
+          </div>
+          <div class="mt-2">
+            <div class="flex justify-between text-xs mb-1">
+              <span id="dailyGoalProgressText" class="font-bold text-white">0 / 4 ポモドーロ完了</span>
+              <span id="dailyGoalPercentText" class="text-rose-300 font-mono">0%</span>
+            </div>
+            <div class="w-full h-2.5 rounded-full bg-white/10 overflow-hidden">
+              <div id="dailyGoalBar" class="h-full bg-gradient-to-r from-rose-500 to-amber-400 transition-all duration-700" style="width: 0%"></div>
+            </div>
+          </div>
+          <p class="text-[11px] text-white/60 mt-2">目標達成でごほうびロックが解除されます！</p>
+        </div>
+      </div>
+
+      <!-- Custom Rewards Unlock Section -->
+      <div class="ios-card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h3 class="text-sm font-bold text-white">🎁 あなたのごほうびリスト</h3>
+            <p class="text-xs text-white/60">必要ポモドーロ数を達成すると、罪悪感なくごほうびを解放できます。</p>
+          </div>
+        </div>
+
+        <form id="formAddReward" class="flex gap-2 mb-3">
+          <input id="inputRewardTitle" type="text" required placeholder="例: お気に入りのカフェラテを飲む / ゲーム30分" class="flex-1 px-3 py-2 rounded-xl bg-black/40 border border-white/15 text-xs text-white placeholder-white/40 focus:outline-none focus:border-amber-400" />
+          <input id="inputRewardCost" type="number" min="1" max="50" value="4" class="w-20 px-2.5 py-2 rounded-xl bg-black/40 border border-white/15 text-xs text-center text-white" title="必要ポモドーロ数" />
+          <button type="submit" class="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shrink-0">追加</button>
+        </form>
+
+        <div id="rewardListContainer" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5"></div>
+      </div>
+
+      <!-- Built-in Pomodoro Challenges -->
+      <div class="ios-card p-4">
+        <h3 class="text-sm font-bold text-white mb-2.5">🏆 ポモドーロ・チャレンジバッジ</h3>
+        <div id="challengeBadgesContainer" class="grid grid-cols-2 sm:grid-cols-3 gap-2.5"></div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 4: AMBIENT SOUND & LIVING BACKGROUNDS (環境音 & 生きた背景) ==================== -->
+    <section id="view-media" class="ios-tab-view hidden flex-1 flex flex-col gap-4 overflow-y-auto max-h-[72vh] pr-1">
+      
+      <!-- Offline Audio & Dynamic Island Sync Synthesizer -->
+      <div class="ios-card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h2 class="text-base font-bold text-white">🎧 オフライン環境音 & ダイナミックアイランド連携</h2>
+            <p class="text-xs text-white/65">再生中はホーム画面に戻ってもiPhone本体のダイナミックアイランドとロック画面に残り時間がライブ表示されます。</p>
+          </div>
+          <button id="btnMasterAudioToggle" type="button" class="px-4 py-2 rounded-xl font-bold text-xs bg-rose-500 text-white shadow">
+            ▶ 再生する
+          </button>
+        </div>
+
+        <!-- Sound Presets -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+          <button type="button" data-sound="lofi" class="sound-preset-btn p-3 rounded-xl border border-rose-400/50 bg-rose-500/20 text-left">
+            <div class="text-lg">🎹</div>
+            <div class="text-xs font-bold text-white mt-1">Lo-fi Chill</div>
+            <div class="text-[10px] text-white/60">温かいコード進行</div>
+          </button>
+          <button type="button" data-sound="rain" class="sound-preset-btn p-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-left">
+            <div class="text-lg">🌧️</div>
+            <div class="text-xs font-bold text-white mt-1">夜の雨音</div>
+            <div class="text-[10px] text-white/60">集中を深める雨粒</div>
+          </button>
+          <button type="button" data-sound="forest" class="sound-preset-btn p-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-left">
+            <div class="text-lg">🌲</div>
+            <div class="text-xs font-bold text-white mt-1">深い森と風</div>
+            <div class="text-[10px] text-white/60">1/fゆらぎの風音</div>
+          </button>
+          <button type="button" data-sound="binaural" class="sound-preset-btn p-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-left">
+            <div class="text-lg">🧠</div>
+            <div class="text-xs font-bold text-white mt-1">Alpha波 (10Hz)</div>
+            <div class="text-[10px] text-white/60">フロー状態誘導音</div>
+          </button>
+        </div>
+
+        <!-- Volume & Alarm Test -->
+        <div class="flex flex-col sm:flex-row items-center gap-4 bg-black/30 p-3 rounded-xl border border-white/10">
+          <div class="flex items-center gap-3 w-full">
+            <span class="text-xs text-white/75 shrink-0">🔊 BGM音量</span>
+            <input id="sliderBgmVolume" type="range" min="1" max="100" value="45" class="w-full accent-rose-500 cursor-pointer" />
+            <span id="bgmVolumeValue" class="text-xs font-mono text-white/80 w-9 text-right">45%</span>
+          </div>
+          <button id="btnTestAlarmChime" type="button" class="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-semibold text-amber-200">
+            🔔 アラーム音を試聴
+          </button>
+        </div>
+      </div>
+
+      <!-- Living Backgrounds (生きた背景 + 最大8枚のカスタム画像保存) -->
+      <div class="ios-card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h2 class="text-base font-bold text-white">🌌 生きた背景（Living Scenes）& 自分の写真</h2>
+            <p class="text-xs text-white/65">60fpsの滑らかな背景アニメーション、または端末内の写真を最大8枚までオフライン保存できます。</p>
+          </div>
+        </div>
+
+        <!-- Built-in Living Scenes -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-4">
+          <button type="button" data-scene="castle" class="scene-select-btn p-3 rounded-xl border border-rose-400/60 bg-gradient-to-br from-indigo-950/90 via-purple-950/80 to-slate-950 text-left">
+            <div class="text-base">🏰</div>
+            <div class="text-xs font-bold text-white mt-1">霧のファンタジー城</div>
+            <div class="text-[10px] text-white/60">蛍の光と漂う霧</div>
+          </button>
+          <button type="button" data-scene="neon" class="scene-select-btn p-3 rounded-xl border border-white/10 bg-gradient-to-br from-fuchsia-950/80 via-slate-900 to-cyan-950/80 text-left">
+            <div class="text-base">🌃</div>
+            <div class="text-xs font-bold text-white mt-1">ネオンの街</div>
+            <div class="text-[10px] text-white/60">サイバーレイン</div>
+          </button>
+          <button type="button" data-scene="forest" class="scene-select-btn p-3 rounded-xl border border-white/10 bg-gradient-to-br from-emerald-950/80 via-teal-950/80 to-slate-950 text-left">
+            <div class="text-base">🍃</div>
+            <div class="text-xs font-bold text-white mt-1">木漏れ日の森</div>
+            <div class="text-[10px] text-white/60">舞い落ちる光の粒</div>
+          </button>
+          <button type="button" data-scene="cosmos" class="scene-select-btn p-3 rounded-xl border border-white/10 bg-gradient-to-br from-slate-950 via-blue-950/80 to-indigo-950 text-left">
+            <div class="text-base">🌠</div>
+            <div class="text-xs font-bold text-white mt-1">星空の書斎</div>
+            <div class="text-[10px] text-white/60">静かな星々の瞬き</div>
+          </button>
+        </div>
+
+        <!-- Custom Photo Upload -->
+        <div class="border-t border-white/10 pt-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-white/85">📷 カスタム背景写真 (<span id="customPhotoCount">0</span> / 8枚・端末内のみ保存)</span>
+            <label for="inputUploadBgPhoto" class="cursor-pointer px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold text-white">
+              ＋ 写真を追加
+            </label>
+            <input id="inputUploadBgPhoto" type="file" accept="image/*" class="hidden" />
+          </div>
+          <div id="customPhotosGrid" class="grid grid-cols-4 sm:grid-cols-8 gap-2 mt-2"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 5: SETTINGS & iOS DYNAMIC ISLAND SAFE AREA (設定・iOS設計) ==================== -->
+    <section id="view-settings" class="ios-tab-view hidden flex-1 flex flex-col gap-4 overflow-y-auto max-h-[72vh] pr-1">
+      
+      <!-- Dynamic Island Safe Area Offset & Home Screen Live Settings -->
+      <div class="ios-card p-4 border-rose-400/30">
+        <h2 class="text-base font-bold text-white mb-1">📱 ダイナミックアイランド余白 & ホーム画面ライブ設定</h2>
+        <p class="text-xs text-white/65 mb-3">iPhoneの機種ごとに上部の物理ダイナミックアイランドとの距離を微調整できます。</p>
+
+        <div class="flex items-center justify-between bg-black/35 p-3 rounded-xl border border-white/10 mb-3">
+          <div>
+            <div class="text-xs font-bold text-white">上部セーフエリア余白（ノッチ・アイランド回避）</div>
+            <div class="text-[11px] text-white/60">ボタンが物理アイランドと重なる場合は「＋」で下げられます</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="btnSafeTopDec" type="button" class="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-bold text-white">−</button>
+            <span id="safeTopOffsetValue" class="text-xs font-mono font-bold text-rose-300 w-12 text-center">+6px</span>
+            <button id="btnSafeTopInc" type="button" class="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-bold text-white">＋</button>
+          </div>
+        </div>
+
+        <div class="p-3 rounded-xl bg-rose-500/15 border border-rose-400/30 text-xs text-white/85 leading-relaxed">
+          <div class="font-bold text-rose-200 mb-1">💡 ホーム画面に戻った時のライブ表示方法（2通り搭載）</div>
+          <ul class="list-disc pl-4 space-y-1 text-[11px] text-white/75">
+            <li><strong>iPhone本体のダイナミックアイランド & ロック画面連携</strong>: タイマー開始時にバックグラウンド音声ストリームと <code>MediaSession</code> が自動起動し、ホーム画面へ戻るとiPhone上部のダイナミックアイランドに波形とカウントダウン画像がライブ表示されます（長押しで残り時間・一時停止・スキップ操作が可能）。</li>
+            <li><strong>ホーム画面フローティング窓 (PiP)</strong>: 上部の<strong>「📲 ホーム画面ライブ表示」</strong>を押すと、他のアプリやホーム画面の上にライブタイマー小窓を常時浮かべることができます。</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Timer Custom Intervals -->
+      <div class="ios-card p-4">
+        <h2 class="text-base font-bold text-white mb-3">⚙️ タイマー間隔と自動化設定</h2>
+        <div class="grid grid-cols-3 gap-3 mb-4">
+          <div>
+            <label for="inputFocusMin" class="block text-xs text-white/70 mb-1">集中 (分)</label>
+            <input id="inputFocusMin" type="number" min="1" max="120" value="25" class="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/15 text-sm font-bold text-white text-center" />
+          </div>
+          <div>
+            <label for="inputShortBreakMin" class="block text-xs text-white/70 mb-1">小休憩 (分)</label>
+            <input id="inputShortBreakMin" type="number" min="1" max="60" value="5" class="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/15 text-sm font-bold text-white text-center" />
+          </div>
+          <div>
+            <label for="inputLongBreakMin" class="block text-xs text-white/70 mb-1">長い休憩 (分)</label>
+            <input id="inputLongBreakMin" type="number" min="1" max="90" value="15" class="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/15 text-sm font-bold text-white text-center" />
+          </div>
+        </div>
+
+        <div class="space-y-2.5 border-t border-white/10 pt-3 text-xs">
+          <label class="flex items-center justify-between cursor-pointer py-1">
+            <span class="text-white/85 font-medium">休憩を自動で開始する</span>
+            <input id="toggleAutoStartBreak" type="checkbox" class="w-4 h-4 accent-rose-500 rounded" />
+          </label>
+          <label class="flex items-center justify-between cursor-pointer py-1">
+            <span class="text-white/85 font-medium">次のポモドーロ（集中）を自動で開始する</span>
+            <input id="toggleAutoStartFocus" type="checkbox" class="w-4 h-4 accent-rose-500 rounded" />
+          </label>
+          <label class="flex items-center justify-between cursor-pointer py-1">
+            <span class="text-white/85 font-medium">タイマー動作中はダイナミックアイランド連携音声を自動維持する</span>
+            <input id="toggleAutoBgm" type="checkbox" checked class="w-4 h-4 accent-rose-500 rounded" />
+          </label>
+        </div>
+
+        <div class="mt-4 flex justify-end">
+          <button id="btnSaveSettings" type="button" class="px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 text-xs font-bold text-white">
+            設定を保存して反映
+          </button>
+        </div>
+      </div>
+
+      <!-- Data Backup / Restore -->
+      <div class="ios-card p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div>
+          <h3 class="text-sm font-bold text-white">💾 ローカルデータのバックアップ・復元</h3>
+          <p class="text-xs text-white/60">タスク、ストリーク、ごほうび、設定をJSONとして書き出し・読み込みできます。</p>
+        </div>
+        <div class="flex gap-2">
+          <button id="btnExportData" type="button" class="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold text-white">書き出し</button>
+          <button id="btnResetAllData" type="button" class="px-3 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-xs font-semibold text-rose-300 border border-rose-500/30">初期化</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==================== iOS STANDBY / LOCK SCREEN OVERLAY MODE ==================== -->
+  <div id="standbyOverlay" class="hidden fixed inset-0 z-50 bg-black flex flex-col justify-between p-6 sm:p-12 safe-top-header">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse"></span>
+        <span class="text-xs font-bold tracking-widest uppercase text-white/60">iOS StandBy Mode ・ 常時表示デスククロック</span>
+      </div>
+      <button id="btnStandbyClose" type="button" class="px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-xs font-bold text-white">
+        通常画面へ戻る ✕
+      </button>
+    </div>
+
+    <div class="my-auto flex flex-col sm:flex-row items-center justify-center gap-8 sm:gap-14">
+      <div class="text-center sm:text-left">
+        <div id="standbyModeBadge" class="text-sm font-bold text-rose-400 uppercase tracking-widest mb-2">FOCUS SESSION</div>
+        <div id="standbyBigClock" class="text-7xl sm:text-9xl font-black font-mono tracking-tighter text-rose-500 drop-shadow-[0_0_30px_rgba(244,63,94,0.35)]">
+          25:00
+        </div>
+      </div>
+      <div class="flex flex-col items-center sm:items-start gap-3 border-t sm:border-t-0 sm:border-l border-white/15 pt-6 sm:pt-0 sm:pl-10">
+        <div class="text-xs text-white/50">集中中のタスク</div>
+        <div id="standbyTaskName" class="text-lg sm:text-xl font-bold text-white max-w-xs truncate">タスク未選択</div>
+        <div id="standbyQuote" class="text-xs text-white/60 italic max-w-xs">「前へ進む秘訣は、まず始めることです。」</div>
+        <div class="flex gap-3 mt-2">
+          <button id="btnStandbyPlayPause" type="button" class="px-6 py-2.5 rounded-full bg-rose-500 text-white font-bold text-sm">開始 / 一時停止</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="text-center text-[11px] text-white/40 pb-4">
+      充電中のiPhoneを横向きに置いた際のスタンバイ表示をシミュレートしています
+    </div>
+  </div>
+
+  <!-- ==================== EXPORT / IMPORT MODAL ==================== -->
+  <div id="dataModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="ios-card max-w-lg w-full p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-bold text-white">データ書き出し / 読み込み (JSON)</h3>
+        <button id="btnCloseDataModal" type="button" class="text-xs text-white/60 hover:text-white">閉じる ✕</button>
+      </div>
+      <textarea id="textareaJsonData" rows="7" class="w-full p-3 rounded-xl bg-black/60 border border-white/15 text-xs font-mono text-emerald-300 focus:outline-none"></textarea>
+      <div class="flex justify-end gap-2 mt-3">
+        <button id="btnCopyJson" type="button" class="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold text-white">コピー</button>
+        <button id="btnImportJson" type="button" class="px-3.5 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 text-xs font-bold text-white">このJSONを復元</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification (Positioned safely below Dynamic Island) -->
+  <div id="toastContainer" class="fixed top-28 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-500 opacity-0 -translate-y-3">
+    <div class="ios-glass px-4 py-2.5 rounded-2xl shadow-2xl border border-white/20 flex items-center gap-2 text-xs font-semibold text-white">
+      <span id="toastIcon">✨</span>
+      <span id="toastMessage">通知メッセージ</span>
+    </div>
+  </div>
+
+  <!-- Bottom iOS Tab Bar with Animated Sliding Glass Pill & Safe Area Inset -->
+  <nav class="safe-bottom-nav fixed bottom-0 inset-x-0 z-30 px-4 pt-1 pointer-events-none">
+    <div class="max-w-lg mx-auto ios-glass rounded-3xl p-1.5 relative flex items-center justify-around shadow-2xl pointer-events-auto overflow-hidden">
+      <!-- Animated Sliding Indicator Pill -->
+      <div id="tabSlidingPill" class="absolute top-1.5 bottom-1.5 left-1.5 w-[calc((100%-12px)/5)] rounded-2xl bg-white/15 border border-white/15 shadow-inner pointer-events-none" style="transform: translateX(0%);"></div>
+
+      <button type="button" data-tab="timer" data-tab-idx="0" class="tab-nav-btn relative z-10 flex-1 py-2 rounded-2xl flex flex-col items-center gap-0.5 text-rose-400 transition-colors duration-300">
+        <span class="text-base leading-none">⏱</span>
+        <span class="text-[10px] font-bold">タイマー</span>
+      </button>
+      <button type="button" data-tab="tasks" data-tab-idx="1" class="tab-nav-btn relative z-10 flex-1 py-2 rounded-2xl flex flex-col items-center gap-0.5 text-white/60 hover:text-white transition-colors duration-300">
+        <span class="text-base leading-none">☑️</span>
+        <span class="text-[10px] font-bold">タスク</span>
+      </button>
+      <button type="button" data-tab="rewards" data-tab-idx="2" class="tab-nav-btn relative z-10 flex-1 py-2 rounded-2xl flex flex-col items-center gap-0.5 text-white/60 hover:text-white transition-colors duration-300">
+        <span class="text-base leading-none">🔥</span>
+        <span class="text-[10px] font-bold">ごほうび</span>
+      </button>
+      <button type="button" data-tab="media" data-tab-idx="3" class="tab-nav-btn relative z-10 flex-1 py-2 rounded-2xl flex flex-col items-center gap-0.5 text-white/60 hover:text-white transition-colors duration-300">
+        <span class="text-base leading-none">🎵</span>
+        <span class="text-[10px] font-bold">音・背景</span>
+      </button>
+      <button type="button" data-tab="settings" data-tab-idx="4" class="tab-nav-btn relative z-10 flex-1 py-2 rounded-2xl flex flex-col items-center gap-0.5 text-white/60 hover:text-white transition-colors duration-300">
+        <span class="text-base leading-none">⚙️</span>
+        <span class="text-[10px] font-bold">iOS設定</span>
+      </button>
+    </div>
+  </nav>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const STORAGE_KEY = 'pomodoro_ios_offline_v1';
+
+      const QUOTES = [
+        '「前へ進む秘訣は、まず始めることです。」',
+        '「短い休憩が、次の25分の集中を鋭く保つ。」',
+        '「タブも寄り道もなし。いま目の前のひとつだけに集中しよう。」',
+        '「小さな集中の積み重ねが、やがて大きな成果になる。」',
+        '「5分離れましょう。一時停止はしても、決してスキップしない。」',
+        '「今日姿を見せたこと自体が、あなたのストリークの証明です。」'
+      ];
+
+      const DEFAULT_STATE = {
+        settings: {
+          focusMin: 25,
+          shortBreakMin: 5,
+          longBreakMin: 15,
+          autoStartBreak: false,
+          autoStartFocus: false,
+          autoBgm: true,
+          bgmVolume: 45,
+          soundPreset: 'lofi',
+          scene: 'castle',
+          activeCustomPhotoIndex: -1,
+          extraTopOffsetPx: 6
+        },
+        timer: {
+          mode: 'focus', // 'focus' | 'shortBreak' | 'longBreak'
+          running: false,
+          remainingSec: 25 * 60,
+          totalSec: 25 * 60,
+          endTimeMs: null,
+          lastTickMs: null,
+          sprintIndex: 0, // 0..3
+          counts: {
+            focus: 0,
+            shortBreak: 0,
+            longBreak: 0
+          }
+        },
+        streak: {
+          days: 1,
+          lastActiveDate: new Date().toISOString().slice(0, 10),
+          dailyGoalTarget: 4,
+          todayCompletedFocus: 0,
+          totalFocusSecondsToday: 0
+        },
+        focusedTaskId: 't_sub_1',
+        taskFilter: 'all',
+        tasks: [
+          {
+            id: 't_proj_1',
+            title: 'iOSオフラインアプリのUI設計',
+            parentId: '',
+            estPomodoros: 4,
+            completedPomodoros: 1,
+            trackedSeconds: 1500,
+            completed: false
+          },
+          {
+            id: 't_sub_1',
+            title: 'Dynamic Islandとバックグラウンド時刻補正の実装',
+            parentId: 't_proj_1',
+            estPomodoros: 2,
+            completedPomodoros: 1,
+            trackedSeconds: 900,
+            completed: false
+          },
+          {
+            id: 't_sub_2',
+            title: 'Web Audio APIによるオフラインLo-fi音源の合成',
+            parentId: 't_proj_1',
+            estPomodoros: 2,
+            completedPomodoros: 0,
+            trackedSeconds: 600,
+            completed: false
+          },
+          {
+            id: 't_proj_2',
+            title: 'イリノイ大学・集中維持研究ノート整理',
+            parentId: '',
+            estPomodoros: 2,
+            completedPomodoros: 0,
+            trackedSeconds: 0,
+            completed: false
+          }
+        ],
+        rewards: [
+          { id: 'r_1', title: 'ハンドドリップコーヒーを淹れる ☕', cost: 2, claimedCount: 0 },
+          { id: 'r_2', title: '好きな音楽を聴きながら15分散歩 🎧', cost: 4, claimedCount: 0 },
+          { id: 'r_3', title: '気になっていたスイーツをごほうびに 🍰', cost: 6, claimedCount: 0 }
+        ],
+        customPhotos: []
+      };
+
+      let state = loadState();
+      let quoteIndex = 0;
+      let timerIntervalId = null;
+      let wakeLockSentinel = null;
+      let narrowFrameMode = false;
+      let lastRenderedTimeStr = '';
+
+      // ==================== SAFE LOCAL STORAGE ====================
+      function loadState() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return JSON.parse(JSON.stringify(DEFAULT_STATE));
+          const parsed = JSON.parse(raw);
+          return Object.assign({}, JSON.parse(JSON.stringify(DEFAULT_STATE)), parsed, {
+            settings: Object.assign({}, DEFAULT_STATE.settings, parsed.settings || {}),
+            timer: Object.assign({}, DEFAULT_STATE.timer, parsed.timer || {}, {
+              counts: Object.assign({}, DEFAULT_STATE.timer.counts, (parsed.timer && parsed.timer.counts) || {})
+            }),
+            streak: Object.assign({}, DEFAULT_STATE.streak, parsed.streak || {})
+          });
+        } catch (err) {
+          return JSON.parse(JSON.stringify(DEFAULT_STATE));
+        }
+      }
+
+      function saveState() {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        } catch (err) {}
+      }
+
+      function applySafeTopOffset() {
+        const offsetPx = Number(state.settings.extraTopOffsetPx ?? 6);
+        document.documentElement.style.setProperty('--extra-top-offset', `${offsetPx}px`);
+        const label = document.getElementById('safeTopOffsetValue');
+        if (label) {
+          label.textContent = `${offsetPx >= 0 ? '+' : ''}${offsetPx}px`;
+        }
+      }
+
+      function checkDailyStreakRollover() {
+        const today = new Date().toISOString().slice(0, 10);
+        if (state.streak.lastActiveDate !== today) {
+          const prev = new Date(state.streak.lastActiveDate);
+          const curr = new Date(today);
+          const diffDays = Math.round((curr - prev) / (1000 * 60 * 60 * 24));
+          if (diffDays === 1 && state.streak.todayCompletedFocus > 0) {
+            state.streak.days += 1;
+          } else if (diffDays > 1) {
+            state.streak.days = 1;
+          }
+          state.streak.lastActiveDate = today;
+          state.streak.todayCompletedFocus = 0;
+          state.streak.totalFocusSecondsToday = 0;
+          saveState();
+        }
+      }
+
+      // ==================== TOAST NOTIFICATION ====================
+      let toastTimeout = null;
+      function showToast(message, icon = '✨') {
+        const container = document.getElementById('toastContainer');
+        const msgEl = document.getElementById('toastMessage');
+        const iconEl = document.getElementById('toastIcon');
+        if (!container || !msgEl || !iconEl) return;
+        iconEl.textContent = icon;
+        msgEl.textContent = message;
+        container.classList.remove('opacity-0', '-translate-y-3');
+        container.classList.add('opacity-100', 'translate-y-0');
+        if (toastTimeout) clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(() => {
+          container.classList.add('opacity-0', '-translate-y-3');
+          container.classList.remove('opacity-100', 'translate-y-0');
+        }, 2800);
+      }
+
+      // ==================== REAL iPHONE DYNAMIC ISLAND & MEDIA SESSION ENGINE ====================
+      // Generates a procedural stereo WAV Blob in memory so `<audio id="iosBgAudioElement">` plays natively in iOS background,
+      // which activates the REAL hardware iPhone Dynamic Island & Lock Screen Now Playing widget!
+      let currentWavBlobUrl = null;
+      const liveArtworkCanvas = document.createElement('canvas');
+      liveArtworkCanvas.width = 512;
+      liveArtworkCanvas.height = 512;
+      const liveArtCtx = liveArtworkCanvas.getContext('2d');
+      let lastMediaSessionSec = -1;
+
+      // Also keep a live stream canvas for Picture-in-Picture (PiP) Home Screen floating window
+      const pipCanvas = document.createElement('canvas');
+      pipCanvas.width = 480;
+      pipCanvas.height = 270;
+      const pipCtx = pipCanvas.getContext('2d');
+      let pipStreamInitialized = false;
+
+      function buildProceduralWavUrl(preset) {
+        const sampleRate = 22050;
+        const durationSec = 8; // Seamless 8-second loop
+        const numSamples = sampleRate * durationSec;
+        const buffer = new ArrayBuffer(44 + numSamples * 2);
+        const view = new DataView(buffer);
+
+        function writeStr(offset, str) {
+          for (let i = 0; i < str.length; i++) {
+            view.setUint8(offset + i, str.charCodeAt(i));
+          }
+        }
+
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + numSamples * 2, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true); // PCM
+        view.setUint16(22, 1, true); // Mono
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true);
+        view.setUint16(32, 2, true);
+        view.setUint16(34, 16, true);
+        writeStr(36, 'data');
+        view.setUint32(40, numSamples * 2, true);
+
+        const chords = [
+          [261.63, 329.63, 392.00, 493.88], // Cmaj7
+          [220.00, 261.63, 329.63, 392.00]  // Am7
+        ];
+        let lastNoise = 0;
+
+        for (let i = 0; i < numSamples; i++) {
+          const t = i / sampleRate;
+          // Smooth crossfade envelope at loop boundaries
+          let sample = 0;
+          if (preset === 'lofi') {
+            const chord = t < 4 ? chords[0] : chords[1];
+            const localT = t % 4;
+            const env = Math.sin((localT / 4) * Math.PI);
+            for (let c = 0; c < chord.length; c++) {
+              sample += Math.sin(2 * Math.PI * chord[c] * t) * 0.14 * env;
+            }
+            // Subtle warm tape hiss
+            sample += (Math.random() * 2 - 1) * 0.008;
+          } else if (preset === 'rain' || preset === 'forest') {
+            const white = Math.random() * 2 - 1;
+            const alpha = preset === 'rain' ? 0.08 : 0.03;
+            lastNoise = (lastNoise + alpha * white) / (1 + alpha);
+            sample = lastNoise * 0.55;
+          } else {
+            // Binaural / Soft Alpha Drone
+            sample = (Math.sin(2 * Math.PI * 200 * t) + Math.sin(2 * Math.PI * 210 * t)) * 0.18;
+          }
+
+          const clamped = Math.max(-1, Math.min(1, sample));
+          view.setInt16(44 + i * 2, clamped * 32767, true);
+        }
+
+        if (currentWavBlobUrl) {
+          URL.revokeObjectURL(currentWavBlobUrl);
+        }
+        const blob = new Blob([buffer], { type: 'audio/wav' });
+        currentWavBlobUrl = URL.createObjectURL(blob);
+        return currentWavBlobUrl;
+      }
+
+      function renderLiveArtworkAndPipCanvas(exactRemainingSec) {
+        const { mode, totalSec, sprintIndex } = state.timer;
+        const formatted = formatMmSs(exactRemainingSec);
+        const fraction = totalSec > 0 ? Math.max(0, Math.min(1, exactRemainingSec / totalSec)) : 0;
+        const activeTask = state.tasks.find(t => t.id === state.focusedTaskId);
+        const taskName = activeTask ? activeTask.title : '集中セッション';
+        const modeTitle = mode === 'focus' ? 'FOCUS SESSION' : mode === 'shortBreak' ? 'SHORT BREAK' : 'LONG BREAK';
+        const accentColor = mode === 'focus' ? '#f43f5e' : mode === 'shortBreak' ? '#10b981' : '#38bdf8';
+
+        // 1. Draw 480x270 PiP Live Video Frame (for Home Screen Floating Window)
+        if (pipCtx) {
+          const pw = pipCanvas.width;
+          const ph = pipCanvas.height;
+          const grad = pipCtx.createLinearGradient(0, 0, pw, ph);
+          grad.addColorStop(0, '#090b12');
+          grad.addColorStop(1, '#181c2e');
+          pipCtx.fillStyle = grad;
+          pipCtx.fillRect(0, 0, pw, ph);
+
+          // Left Progress Ring
+          const cx = 115;
+          const cy = ph / 2;
+          const r = 76;
+          pipCtx.lineWidth = 12;
+          pipCtx.strokeStyle = 'rgba(255,255,255,0.12)';
+          pipCtx.beginPath();
+          pipCtx.arc(cx, cy, r, 0, Math.PI * 2);
+          pipCtx.stroke();
+
+          pipCtx.strokeStyle = accentColor;
+          pipCtx.lineCap = 'round';
+          pipCtx.beginPath();
+          pipCtx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fraction);
+          pipCtx.stroke();
+
+          // Inside ring sprint label
+          pipCtx.fillStyle = '#ffffff';
+          pipCtx.font = 'bold 22px Inter, sans-serif';
+          pipCtx.textAlign = 'center';
+          pipCtx.fillText(`${sprintIndex + 1}/4`, cx, cy + 8);
+
+          // Right Countdown & Task Info
+          pipCtx.textAlign = 'left';
+          pipCtx.fillStyle = accentColor;
+          pipCtx.font = 'bold 16px Inter, sans-serif';
+          pipCtx.fillText(modeTitle, 220, 78);
+
+          pipCtx.fillStyle = '#ffffff';
+          pipCtx.font = '900 68px Inter, monospace';
+          pipCtx.fillText(formatted, 216, 152);
+
+          pipCtx.fillStyle = 'rgba(255,255,255,0.78)';
+          pipCtx.font = '600 18px "Noto Sans JP", sans-serif';
+          const shortTask = taskName.length > 13 ? taskName.slice(0, 13) + '…' : taskName;
+          pipCtx.fillText('🎯 ' + shortTask, 220, 198);
+        }
+
+        // 2. Update iOS MediaSession & Hardware Dynamic Island Artwork once per integer second
+        const intSec = Math.ceil(exactRemainingSec);
+        if (intSec === lastMediaSessionSec) return;
+        lastMediaSessionSec = intSec;
+
+        if (liveArtCtx) {
+          const w = 512;
+          const h = 512;
+          const g = liveArtCtx.createRadialGradient(w / 2, h / 2, 40, w / 2, h / 2, 260);
+          g.addColorStop(0, '#1e1b4b');
+          g.addColorStop(1, '#090b10');
+          liveArtCtx.fillStyle = g;
+          liveArtCtx.fillRect(0, 0, w, h);
+
+          // Progress Ring
+          liveArtCtx.lineWidth = 28;
+          liveArtCtx.strokeStyle = 'rgba(255,255,255,0.12)';
+          liveArtCtx.beginPath();
+          liveArtCtx.arc(w / 2, h / 2, 195, 0, Math.PI * 2);
+          liveArtCtx.stroke();
+
+          liveArtCtx.strokeStyle = accentColor;
+          liveArtCtx.lineCap = 'round';
+          liveArtCtx.beginPath();
+          liveArtCtx.arc(w / 2, h / 2, 195, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fraction);
+          liveArtCtx.stroke();
+
+          // Big Timer Text inside Dynamic Island Thumbnail
+          liveArtCtx.fillStyle = '#ffffff';
+          liveArtCtx.textAlign = 'center';
+          liveArtCtx.font = '900 120px Inter, monospace';
+          liveArtCtx.fillText(formatted, w / 2, h / 2 + 36);
+
+          liveArtCtx.fillStyle = accentColor;
+          liveArtCtx.font = 'bold 30px "Noto Sans JP", sans-serif';
+          liveArtCtx.fillText(mode === 'focus' ? '集中スプリント' : '休憩タイム', w / 2, h / 2 - 70);
+        }
+
+        if ('mediaSession' in navigator && typeof MediaMetadata !== 'undefined') {
+          try {
+            const artUrl = liveArtworkCanvas.toDataURL('image/png');
+            const modeJp = mode === 'focus' ? '集中セッション' : mode === 'shortBreak' ? '小休憩' : '長い休憩';
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: `🍅 残り ${formatted} — ${modeJp}`,
+              artist: `🎯 ${taskName}`,
+              album: `サイクル ${sprintIndex + 1}/4 ・ Pomodoro iOS`,
+              artwork: [{ src: artUrl, sizes: '512x512', type: 'image/png' }]
+            });
+            navigator.mediaSession.playbackState = state.timer.running ? 'playing' : 'paused';
+            if (navigator.mediaSession.setPositionState && totalSec > 0) {
+              const elapsed = Math.max(0, Math.min(totalSec, totalSec - exactRemainingSec));
+              navigator.mediaSession.setPositionState({
+                duration: totalSec,
+                playbackRate: state.timer.running ? 1 : 0,
+                position: elapsed
+              });
+            }
+          } catch (e) {}
+        }
+      }
+
+      function setupMediaSessionHandlers() {
+        if (!('mediaSession' in navigator)) return;
+        try {
+          navigator.mediaSession.setActionHandler('play', () => {
+            startTimer();
+          });
+          navigator.mediaSession.setActionHandler('pause', () => {
+            pauseTimer();
+          });
+          navigator.mediaSession.setActionHandler('nexttrack', () => {
+            completeCurrentSession();
+          });
+          navigator.mediaSession.setActionHandler('previoustrack', () => {
+            resetTimer();
+          });
+        } catch (e) {}
+      }
+
+      // Toggle Picture-in-Picture Floating Live Timer for iOS Home Screen
+      async function togglePictureInPictureLiveTimer() {
+        const videoEl = document.getElementById('pipVideoElement');
+        if (!videoEl) return;
+        try {
+          if (document.pictureInPictureElement) {
+            await document.exitPictureInPicture();
+            showToast('ホーム画面PiP表示を終了しました', '📲');
+            return;
+          }
+          renderLiveArtworkAndPipCanvas(state.timer.remainingSec);
+          if (!pipStreamInitialized && pipCanvas.captureStream) {
+            const stream = pipCanvas.captureStream(30);
+            videoEl.srcObject = stream;
+            pipStreamInitialized = true;
+          }
+          await videoEl.play();
+          if (videoEl.requestPictureInPicture) {
+            await videoEl.requestPictureInPicture();
+            showToast('ホーム画面に戻っても小窓でライブ表示されます！', '📲');
+          } else if (videoEl.webkitSetPresentationMode) {
+            videoEl.webkitSetPresentationMode('picture-in-picture');
+            showToast('ホーム画面に戻っても小窓でライブ表示されます！', '📲');
+          } else {
+            startOfflineBgm();
+            showToast('ダイナミックアイランド音声連携を開始しました！ホーム画面へ戻ると上部に表示されます', '🏝️');
+          }
+        } catch (err) {
+          // Fallback: Ensure MediaSession audio is active for hardware Dynamic Island
+          startOfflineBgm();
+          showToast('ダイナミックアイランド連携を起動！ホーム画面へ戻ると上部にライブ表示されます', '🏝️');
+        }
+      }
+
+      // ==================== OFFLINE WEB AUDIO + HTML5 BACKGROUND AUDIO SYNTHESIZER ====================
+      let audioCtx = null;
+      let bgmPlaying = false;
+
+      function ensureAudioContext() {
+        if (!audioCtx) {
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+          if (AudioContextClass) {
+            audioCtx = new AudioContextClass();
+          }
+        }
+        if (audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+      }
+
+      function startOfflineBgm() {
+        ensureAudioContext();
+        const bgAudio = document.getElementById('iosBgAudioElement');
+        if (!bgAudio) return;
+
+        const wavUrl = buildProceduralWavUrl(state.settings.soundPreset || 'lofi');
+        bgAudio.src = wavUrl;
+        bgAudio.volume = Math.max(0.02, Math.min(1, (state.settings.bgmVolume || 45) / 100));
+        bgAudio.play().then(() => {
+          bgmPlaying = true;
+          setupMediaSessionHandlers();
+          lastMediaSessionSec = -1;
+          renderLiveArtworkAndPipCanvas(state.timer.remainingSec);
+          updateAudioUi();
+        }).catch(() => {
+          bgmPlaying = false;
+          updateAudioUi();
+        });
+      }
+
+      function stopOfflineBgm() {
+        bgmPlaying = false;
+        const bgAudio = document.getElementById('iosBgAudioElement');
+        if (bgAudio) {
+          try {
+            bgAudio.pause();
+          } catch (e) {}
+        }
+        updateAudioUi();
+      }
+
+      function toggleOfflineBgm() {
+        if (bgmPlaying) {
+          stopOfflineBgm();
+          showToast('環境音とアイランド音声連携を停止しました', '🔇');
+        } else {
+          startOfflineBgm();
+          showToast('環境音＆ホーム画面ダイナミックアイランド連携ON', '🏝️');
+        }
+      }
+
+      function playAlarmChime() {
+        ensureAudioContext();
+        if (!audioCtx) return;
+        const now = audioCtx.currentTime;
+        const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+        notes.forEach((freq, idx) => {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + idx * 0.18);
+          gain.gain.setValueAtTime(0.001, now + idx * 0.18);
+          gain.gain.exponentialRampToValueAtTime(0.28, now + idx * 0.18 + 0.04);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + idx * 0.18 + 1.4);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(now + idx * 0.18);
+          osc.stop(now + idx * 0.18 + 1.45);
+        });
+      }
+
+      function updateAudioUi() {
+        const badge = document.getElementById('audioStatusBadge');
+        const syncBadge = document.getElementById('liveIslandSyncBadge');
+        const islandEq = document.getElementById('islandEq');
+        const masterBtn = document.getElementById('btnMasterAudioToggle');
+        const quickIcon = document.getElementById('quickBgmIcon');
+
+        if (bgmPlaying) {
+          if (badge) {
+            badge.textContent = '🎵 BGM・アイランド連動中';
+            badge.className = 'text-[11px] text-emerald-300 font-semibold';
+          }
+          if (syncBadge) {
+            syncBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-rose-400 animate-ping"></span><span>ホーム画面アイランドLIVE</span>';
+            syncBadge.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] bg-rose-500/25 text-rose-200 border border-rose-400/40 shadow-sm';
+          }
+          if (islandEq) {
+            islandEq.classList.remove('hidden');
+            islandEq.classList.add('flex');
+          }
+          if (masterBtn) {
+            masterBtn.textContent = '⏸ 停止する';
+            masterBtn.className = 'px-4 py-2 rounded-xl font-bold text-xs bg-amber-500 text-slate-950 shadow';
+          }
+          if (quickIcon) quickIcon.textContent = '🔊';
+        } else {
+          if (badge) {
+            badge.textContent = '🔇 音OFF';
+            badge.className = 'text-[11px] text-white/60';
+          }
+          if (syncBadge) {
+            syncBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span>オフライン動作中</span>';
+            syncBadge.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 shadow-sm';
+          }
+          if (islandEq) {
+            islandEq.classList.add('hidden');
+            islandEq.classList.remove('flex');
+          }
+          if (masterBtn) {
+            masterBtn.textContent = '▶ 再生する';
+            masterBtn.className = 'px-4 py-2 rounded-xl font-bold text-xs bg-rose-500 text-white shadow';
+          }
+          if (quickIcon) quickIcon.textContent = '🎵';
+        }
+
+        document.querySelectorAll('.sound-preset-btn').forEach(btn => {
+          const isSelected = btn.getAttribute('data-sound') === state.settings.soundPreset;
+          btn.className = isSelected
+            ? 'sound-preset-btn p-3 rounded-xl border border-rose-400/60 bg-rose-500/20 text-left'
+            : 'sound-preset-btn p-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-left';
+        });
+      }
+
+      // ==================== SCREEN WAKE LOCK ====================
+      async function requestWakeLock() {
+        try {
+          if ('wakeLock' in navigator && state.timer.running) {
+            wakeLockSentinel = await navigator.wakeLock.request('screen');
+          }
+        } catch (err) {}
+      }
+
+      async function releaseWakeLock() {
+        try {
+          if (wakeLockSentinel) {
+            await wakeLockSentinel.release();
+            wakeLockSentinel = null;
+          }
+        } catch (err) {}
+      }
+
+      // ==================== HIERARCHICAL TASK TIME TRACKING ====================
+      function creditFocusedTaskSeconds(seconds) {
+        if (seconds <= 0 || state.timer.mode !== 'focus') return;
+        state.streak.totalFocusSecondsToday = (state.streak.totalFocusSecondsToday || 0) + seconds;
+        const activeTask = state.tasks.find(t => t.id === state.focusedTaskId);
+        if (!activeTask) return;
+        activeTask.trackedSeconds = (activeTask.trackedSeconds || 0) + seconds;
+        if (activeTask.parentId) {
+          const parentTask = state.tasks.find(t => t.id === activeTask.parentId);
+          if (parentTask) {
+            parentTask.trackedSeconds = (parentTask.trackedSeconds || 0) + seconds;
+          }
+        }
+      }
+
+      function formatDurationJp(totalSec) {
+        const s = Math.max(0, Math.round(totalSec || 0));
+        const hrs = Math.floor(s / 3600);
+        const mins = Math.floor((s % 3600) / 60);
+        const secs = s % 60;
+        if (hrs > 0) {
+          return `${hrs}時間${mins}分`;
+        }
+        return `${mins}分${String(secs).padStart(2, '0')}秒`;
+      }
+
+      function formatMmSs(totalSec) {
+        const s = Math.max(0, Math.ceil(totalSec));
+        const mins = Math.floor(s / 60);
+        const secs = s % 60;
+        return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      }
+
+      // ==================== TIMER ENGINE (60FPS FLUID + ABSOLUTE DEADLINE DELTA) ====================
+      function getDurationForMode(mode) {
+        if (mode === 'focus') return Math.max(1, Number(state.settings.focusMin) || 25) * 60;
+        if (mode === 'shortBreak') return Math.max(1, Number(state.settings.shortBreakMin) || 5) * 60;
+        return Math.max(1, Number(state.settings.longBreakMin) || 15) * 60;
+      }
+
+      function switchMode(newMode, autoStart = false) {
+        pauseTimer(false);
+        state.timer.mode = newMode;
+        const dur = getDurationForMode(newMode);
+        state.timer.totalSec = dur;
+        state.timer.remainingSec = dur;
+        state.timer.endTimeMs = null;
+        state.timer.lastTickMs = null;
+        saveState();
+        renderTimerUi();
+        renderLiveArtworkAndPipCanvas(dur);
+        if (autoStart) {
+          startTimer();
+        }
+      }
+
+      function startTimer() {
+        ensureAudioContext();
+        if (state.timer.running) return;
+        const now = Date.now();
+        state.timer.running = true;
+        state.timer.lastTickMs = now;
+        state.timer.endTimeMs = now + state.timer.remainingSec * 1000;
+
+        // Automatically start background WAV stream so hardware iPhone Dynamic Island receives Live Now Playing session
+        if (state.settings.autoBgm && !bgmPlaying) {
+          startOfflineBgm();
+        }
+
+        requestWakeLock();
+        saveState();
+        renderTimerUi();
+
+        if (timerIntervalId) clearInterval(timerIntervalId);
+        timerIntervalId = setInterval(tickTimer, 200);
+      }
+
+      function pauseTimer(save = true) {
+        if (timerIntervalId) {
+          clearInterval(timerIntervalId);
+          timerIntervalId = null;
+        }
+        if (state.timer.running && state.timer.lastTickMs) {
+          const now = Date.now();
+          const elapsedSec = Math.min(
+            state.timer.remainingSec,
+            Math.max(0, Math.floor((now - state.timer.lastTickMs) / 1000))
+          );
+          if (elapsedSec > 0) {
+            creditFocusedTaskSeconds(elapsedSec);
+          }
+          const remaining = Math.max(0, Math.ceil((state.timer.endTimeMs - now) / 1000));
+          state.timer.remainingSec = remaining;
+        }
+        state.timer.running = false;
+        state.timer.endTimeMs = null;
+        state.timer.lastTickMs = null;
+        releaseWakeLock();
+        if (save) saveState();
+        renderTimerUi();
+        renderTasksUi();
+        renderLiveArtworkAndPipCanvas(state.timer.remainingSec);
+      }
+
+      function resetTimer() {
+        pauseTimer(false);
+        const dur = getDurationForMode(state.timer.mode);
+        state.timer.totalSec = dur;
+        state.timer.remainingSec = dur;
+        saveState();
+        renderTimerUi();
+        renderLiveArtworkAndPipCanvas(dur);
+        showToast('タイマーをリセットしました', '↺');
+      }
+
+      function completeCurrentSession() {
+        pauseTimer(false);
+        playAlarmChime();
+
+        if (state.timer.mode === 'focus') {
+          state.timer.counts.focus += 1;
+          state.streak.todayCompletedFocus += 1;
+          const activeTask = state.tasks.find(t => t.id === state.focusedTaskId);
+          if (activeTask) {
+            activeTask.completedPomodoros = (activeTask.completedPomodoros || 0) + 1;
+            if (activeTask.parentId) {
+              const parent = state.tasks.find(t => t.id === activeTask.parentId);
+              if (parent) parent.completedPomodoros = (parent.completedPomodoros || 0) + 1;
+            }
+          }
+
+          state.timer.sprintIndex = (state.timer.sprintIndex + 1) % 4;
+          const isLongBreakNext = state.timer.sprintIndex === 0;
+          const nextMode = isLongBreakNext ? 'longBreak' : 'shortBreak';
+          showToast(
+            isLongBreakNext
+              ? '🎉 4スプリント達成！長めの休憩を取りましょう'
+              : '✨ 集中完了！5分間の小休憩を取りましょう',
+            '🔔'
+          );
+          switchMode(nextMode, state.settings.autoStartBreak);
+        } else {
+          if (state.timer.mode === 'shortBreak') {
+            state.timer.counts.shortBreak += 1;
+          } else {
+            state.timer.counts.longBreak += 1;
+          }
+          showToast('休憩完了！次の集中スプリントを始めましょう', '🚀');
+          switchMode('focus', state.settings.autoStartFocus);
+        }
+
+        saveState();
+        renderAll();
+      }
+
+      function tickTimer() {
+        if (!state.timer.running || !state.timer.endTimeMs) return;
+        const now = Date.now();
+        const elapsedSinceLastTick = Math.floor((now - (state.timer.lastTickMs || now)) / 1000);
+
+        if (elapsedSinceLastTick >= 1) {
+          const boundedSec = Math.min(state.timer.remainingSec, elapsedSinceLastTick);
+          creditFocusedTaskSeconds(boundedSec);
+          state.timer.lastTickMs += elapsedSinceLastTick * 1000;
+        }
+
+        const exactRemaining = Math.max(0, (state.timer.endTimeMs - now) / 1000);
+        const remainingSec = Math.max(0, Math.ceil(exactRemaining));
+        state.timer.remainingSec = remainingSec;
+
+        if (exactRemaining <= 0) {
+          completeCurrentSession();
+          return;
+        }
+
+        renderTimerUi(exactRemaining);
+        renderLiveArtworkAndPipCanvas(exactRemaining);
+      }
+
+      function recoverRunningTimerOnBoot() {
+        if (state.timer.running && state.timer.endTimeMs) {
+          const now = Date.now();
+          const lastTick = state.timer.lastTickMs || now;
+          const rawElapsedSec = Math.max(0, Math.floor((now - lastTick) / 1000));
+          const cappedElapsed = Math.min(state.timer.remainingSec, rawElapsedSec);
+          creditFocusedTaskSeconds(cappedElapsed);
+
+          const remainingSec = Math.ceil((state.timer.endTimeMs - now) / 1000);
+          if (remainingSec <= 0) {
+            state.timer.running = false;
+            completeCurrentSession();
+          } else {
+            state.timer.remainingSec = remainingSec;
+            state.timer.lastTickMs = now;
+            if (timerIntervalId) clearInterval(timerIntervalId);
+            timerIntervalId = setInterval(tickTimer, 200);
+          }
+        }
+      }
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && state.timer.running) {
+          tickTimer();
+          requestWakeLock();
+        } else if (document.visibilityState === 'hidden' && state.timer.running) {
+          // Immediately refresh MediaSession metadata right as user swipes to iOS Home Screen
+          lastMediaSessionSec = -1;
+          renderLiveArtworkAndPipCanvas(state.timer.remainingSec);
+        }
+      });
+
+      // ==================== UI RENDERERS WITH ROLLING DIGITS & SPRING PHYSICS ====================
+      function updateRollingClockDigits(formatted) {
+        const mainDisplay = document.getElementById('mainTimerDisplay');
+        if (!mainDisplay) return;
+
+        if (!lastRenderedTimeStr || lastRenderedTimeStr.length !== formatted.length) {
+          mainDisplay.innerHTML = formatted
+            .split('')
+            .map((ch, idx) => `<span data-digit-idx="${idx}" class="digit-slot">${ch}</span>`)
+            .join('');
+          lastRenderedTimeStr = formatted;
+          return;
+        }
+
+        if (lastRenderedTimeStr !== formatted) {
+          const spans = mainDisplay.querySelectorAll('.digit-slot');
+          for (let i = 0; i < formatted.length; i++) {
+            if (formatted[i] !== lastRenderedTimeStr[i] && spans[i]) {
+              spans[i].textContent = formatted[i];
+              spans[i].classList.remove('digit-pop');
+              void spans[i].offsetWidth; // trigger reflow for spring animation
+              spans[i].classList.add('digit-pop');
+            }
+          }
+          lastRenderedTimeStr = formatted;
+        }
+      }
+
+      function renderTimerUi(exactSecOverride) {
+        const { mode, remainingSec, totalSec, running, sprintIndex, counts } = state.timer;
+        const smoothRemaining = typeof exactSecOverride === 'number' ? exactSecOverride : remainingSec;
+        const formatted = formatMmSs(remainingSec);
+
+        document.getElementById('countFocus').textContent = counts.focus;
+        document.getElementById('countShortBreak').textContent = counts.shortBreak;
+        document.getElementById('countLongBreak').textContent = counts.longBreak;
+
+        const modeMeta = {
+          focus: {
+            label: '集中セッション',
+            stroke: '#f43f5e',
+            haloClass: 'bg-rose-500/20',
+            badgeClass: 'bg-rose-500/20 text-rose-200 border-rose-400/30',
+            dotClass: 'bg-rose-500'
+          },
+          shortBreak: {
+            label: '小休憩 (5分リセット)',
+            stroke: '#10b981',
+            haloClass: 'bg-emerald-500/20',
+            badgeClass: 'bg-emerald-500/20 text-emerald-200 border-emerald-400/30',
+            dotClass: 'bg-emerald-400'
+          },
+          longBreak: {
+            label: '長い休憩 (しっかり回復)',
+            stroke: '#38bdf8',
+            haloClass: 'bg-sky-500/20',
+            badgeClass: 'bg-sky-500/20 text-sky-200 border-sky-400/30',
+            dotClass: 'bg-sky-400'
+          }
+        }[mode];
+
+        updateRollingClockDigits(formatted);
+        document.getElementById('islandTimerText').textContent = formatted;
+        document.getElementById('islandBigTime').textContent = formatted;
+        document.getElementById('standbyBigClock').textContent = formatted;
+        document.getElementById('islandModeText').textContent = modeMeta.label;
+        document.getElementById('standbyModeBadge').textContent = modeMeta.label;
+
+        const badgeEl = document.getElementById('sessionLabelBadge');
+        badgeEl.textContent = modeMeta.label;
+        badgeEl.className = `px-3 py-0.5 rounded-full text-xs font-bold border mb-1 transition-all duration-500 ${modeMeta.badgeClass}`;
+
+        const haloEl = document.getElementById('ringAmbientHalo');
+        if (haloEl) {
+          haloEl.className = `absolute inset-6 rounded-full blur-2xl transition-all duration-700 pointer-events-none ${modeMeta.haloClass} ${running ? 'scale-105 opacity-100' : 'scale-95 opacity-60'}`;
+        }
+
+        const islandDot = document.getElementById('islandDot');
+        islandDot.className = `w-2.5 h-2.5 rounded-full ${modeMeta.dotClass} ${running ? 'animate-ping' : ''}`;
+
+        // Sub-second smooth Progress Ring
+        const circumference = 716.28;
+        const fraction = totalSec > 0 ? smoothRemaining / totalSec : 0;
+        const offset = circumference * (1 - fraction);
+        const circle = document.getElementById('timerRingCircle');
+        if (circle) {
+          circle.style.strokeDashoffset = String(offset);
+          circle.style.stroke = modeMeta.stroke;
+        }
+
+        document.querySelectorAll('.mode-switch-btn').forEach(btn => {
+          const btnMode = btn.getAttribute('data-mode');
+          if (btnMode === mode) {
+            btn.className = 'mode-switch-btn ios-glass rounded-2xl p-2.5 flex flex-col items-center justify-center border-rose-400/60 bg-rose-500/20 shadow-lg scale-[1.02]';
+          } else {
+            btn.className = 'mode-switch-btn ios-glass rounded-2xl p-2.5 flex flex-col items-center justify-center hover:bg-white/10';
+          }
+        });
+
+        for (let i = 0; i < 4; i++) {
+          const dot = document.getElementById(`sprintDot${i}`);
+          if (!dot) continue;
+          if (i < sprintIndex) {
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 transition-all duration-500';
+          } else if (i === sprintIndex) {
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-400 ring-4 ring-rose-500/25 scale-110 transition-all duration-500';
+          } else {
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-white/25 transition-all duration-500';
+          }
+        }
+        document.getElementById('sprintStepLabel').textContent = `${sprintIndex + 1}/4`;
+        document.getElementById('islandCycleStatus').textContent = `サイクル ${sprintIndex + 1} / 4 ・ ホーム画面アイランド同期ON`;
+
+        document.getElementById('startPauseIcon').textContent = running ? '⏸' : '▶';
+        document.getElementById('startPauseText').textContent = running ? '一時停止' : '開始';
+        document.getElementById('btnIslandToggleTimer').textContent = running ? '一時停止' : '開始';
+
+        const activeTask = state.tasks.find(t => t.id === state.focusedTaskId);
+        const titleEl = document.getElementById('focusedTaskTitle');
+        const timeEl = document.getElementById('focusedTaskTimeInfo');
+        const projBadge = document.getElementById('focusedTaskProjectBadge');
+        const islandTaskEl = document.getElementById('islandActiveTask');
+        const standbyTaskEl = document.getElementById('standbyTaskName');
+
+        if (activeTask) {
+          titleEl.textContent = activeTask.title;
+          islandTaskEl.textContent = activeTask.title;
+          standbyTaskEl.textContent = activeTask.title;
+          timeEl.textContent = `タスク累計: ${formatDurationJp(activeTask.trackedSeconds)} (${activeTask.completedPomodoros || 0}/${activeTask.estPomodoros || 1} 🍅)`;
+          if (activeTask.parentId) {
+            const parent = state.tasks.find(t => t.id === activeTask.parentId);
+            if (parent) {
+              projBadge.textContent = `親: ${parent.title}`;
+              projBadge.classList.remove('hidden');
+            } else {
+              projBadge.classList.add('hidden');
+            }
+          } else {
+            projBadge.classList.add('hidden');
+          }
+        } else {
+          titleEl.textContent = 'タスクを選択して時間を自動記録';
+          islandTaskEl.textContent = 'タスク未選択';
+          standbyTaskEl.textContent = 'タスク未選択';
+          timeEl.textContent = 'タスクタブから集中する項目を選べます';
+          projBadge.classList.add('hidden');
+        }
+      }
+
+      function renderTasksUi() {
+        const container = document.getElementById('taskListContainer');
+        const parentSelect = document.getElementById('selectParentTask');
+        const totalTodayEl = document.getElementById('tasksTotalTrackedToday');
+        if (!container || !parentSelect) return;
+
+        totalTodayEl.textContent = formatDurationJp(state.streak.totalFocusSecondsToday || 0);
+
+        const rootTasks = state.tasks.filter(t => !t.parentId);
+        const currentParentVal = parentSelect.value;
+        parentSelect.innerHTML = '<option value="">親プロジェクトなし（メイン）</option>';
+        rootTasks.forEach(rt => {
+          const opt = document.createElement('option');
+          opt.value = rt.id;
+          opt.textContent = `📁 ${rt.title}`;
+          parentSelect.appendChild(opt);
+        });
+        parentSelect.value = currentParentVal;
+
+        document.querySelectorAll('.task-filter-btn').forEach(btn => {
+          const f = btn.getAttribute('data-task-filter');
+          btn.className = f === state.taskFilter
+            ? 'task-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-rose-500 text-white'
+            : 'task-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-white/5 text-white/70 hover:bg-white/10';
+        });
+
+        const filterFn = (t) => {
+          if (state.taskFilter === 'active') return !t.completed;
+          if (state.taskFilter === 'completed') return t.completed;
+          return true;
+        };
+
+        container.innerHTML = '';
+
+        rootTasks.forEach(root => {
+          const children = state.tasks.filter(c => c.parentId === root.id);
+          const rootVisible = filterFn(root) || children.some(filterFn);
+          if (!rootVisible) return;
+
+          const card = document.createElement('div');
+          card.className = 'ios-card p-3.5 flex flex-col gap-2';
+
+          card.appendChild(buildTaskRowElement(root, false));
+
+          const visibleChildren = children.filter(filterFn);
+          if (visibleChildren.length > 0) {
+            const subWrap = document.createElement('div');
+            subWrap.className = 'pl-5 border-l-2 border-white/10 flex flex-col gap-2 mt-1';
+            visibleChildren.forEach(sub => {
+              subWrap.appendChild(buildTaskRowElement(sub, true));
+            });
+            card.appendChild(subWrap);
+          }
+
+          container.appendChild(card);
+        });
+
+        if (container.children.length === 0) {
+          container.innerHTML = `
+            <div class="ios-card p-8 text-center text-xs text-white/50">
+              表示できるタスクがありません。上のフォームから新しいタスクを追加してください。
+            </div>
+          `;
+        }
+      }
+
+      function buildTaskRowElement(task, isSubtask) {
+        const isFocused = state.focusedTaskId === task.id;
+        const row = document.createElement('div');
+        row.className = `flex items-center justify-between gap-2 p-2.5 rounded-xl transition-all duration-300 ${
+          isFocused ? 'bg-rose-500/20 border border-rose-400/40' : 'bg-black/25 hover:bg-black/40'
+        }`;
+
+        const left = document.createElement('div');
+        left.className = 'flex items-center gap-2.5 min-w-0 flex-1';
+
+        const checkBtn = document.createElement('button');
+        checkBtn.type = 'button';
+        checkBtn.className = `w-5 h-5 rounded-md border flex items-center justify-center text-xs shrink-0 ${
+          task.completed ? 'bg-emerald-500 border-emerald-400 text-slate-950 font-bold' : 'border-white/30 hover:border-white'
+        }`;
+        checkBtn.textContent = task.completed ? '✓' : '';
+        checkBtn.addEventListener('click', () => {
+          task.completed = !task.completed;
+          saveState();
+          renderTasksUi();
+        });
+
+        const textWrap = document.createElement('div');
+        textWrap.className = 'min-w-0 flex-1';
+
+        const titleLine = document.createElement('div');
+        titleLine.className = `text-xs sm:text-sm font-semibold truncate ${
+          task.completed ? 'line-through text-white/40' : 'text-white'
+        }`;
+        titleLine.textContent = (isSubtask ? '↳ ' : '📁 ') + task.title;
+
+        const metaLine = document.createElement('div');
+        metaLine.className = 'text-[11px] text-white/60 flex items-center gap-2 mt-0.5';
+        metaLine.innerHTML = `
+          <span class="font-mono text-rose-300">⏱ ${formatDurationJp(task.trackedSeconds)}</span>
+          <span>・</span>
+          <span>🍅 ${task.completedPomodoros || 0}/${task.estPomodoros || 1}</span>
+        `;
+
+        textWrap.appendChild(titleLine);
+        textWrap.appendChild(metaLine);
+        left.appendChild(checkBtn);
+        left.appendChild(textWrap);
+
+        const right = document.createElement('div');
+        right.className = 'flex items-center gap-1.5 shrink-0';
+
+        const focusBtn = document.createElement('button');
+        focusBtn.type = 'button';
+        focusBtn.className = isFocused
+          ? 'px-2.5 py-1 rounded-lg bg-rose-500 text-white text-[11px] font-bold shadow'
+          : 'px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white/80 text-[11px] font-semibold';
+        focusBtn.textContent = isFocused ? '🎯 集中中' : '集中する';
+        focusBtn.addEventListener('click', () => {
+          state.focusedTaskId = task.id;
+          lastMediaSessionSec = -1;
+          saveState();
+          renderTimerUi();
+          renderTasksUi();
+          renderLiveArtworkAndPipCanvas(state.timer.remainingSec);
+          showToast(`「${task.title}」を集中タスクに設定しました`, '🎯');
+        });
+
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'p-1.5 rounded-lg text-white/40 hover:text-rose-400 text-xs';
+        delBtn.textContent = '✕';
+        delBtn.title = '削除';
+        delBtn.addEventListener('click', () => {
+          state.tasks = state.tasks.filter(t => t.id !== task.id && t.parentId !== task.id);
+          if (state.focusedTaskId === task.id) {
+            state.focusedTaskId = state.tasks[0] ? state.tasks[0].id : '';
+          }
+          saveState();
+          renderTimerUi();
+          renderTasksUi();
+        });
+
+        right.appendChild(focusBtn);
+        right.appendChild(delBtn);
+
+        row.appendChild(left);
+        row.appendChild(right);
+        return row;
+      }
+
+      // ==================== REWARDS & CHALLENGES RENDERER ====================
+      function renderRewardsUi() {
+        document.getElementById('streakDaysCount').textContent = state.streak.days;
+        document.getElementById('dailyGoalTargetText').textContent = `${state.streak.dailyGoalTarget}回`;
+
+        const done = state.streak.todayCompletedFocus;
+        const target = Math.max(1, state.streak.dailyGoalTarget);
+        const pct = Math.min(100, Math.round((done / target) * 100));
+        document.getElementById('dailyGoalProgressText').textContent = `${done} / ${target} ポモドーロ完了`;
+        document.getElementById('dailyGoalPercentText').textContent = `${pct}%`;
+        document.getElementById('dailyGoalBar').style.width = `${pct}%`;
+
+        const totalFocusEver = state.timer.counts.focus + done;
+        const rewardContainer = document.getElementById('rewardListContainer');
+        rewardContainer.innerHTML = '';
+
+        state.rewards.forEach(reward => {
+          const unlocked = totalFocusEver >= reward.cost;
+          const card = document.createElement('div');
+          card.className = `p-3.5 rounded-2xl border flex flex-col justify-between gap-2 transition-all duration-300 ${
+            unlocked
+              ? 'bg-amber-500/15 border-amber-400/40'
+              : 'bg-black/30 border-white/10 opacity-75'
+          }`;
+
+          card.innerHTML = `
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                  unlocked ? 'bg-amber-400 text-slate-950' : 'bg-white/10 text-white/60'
+                }">${unlocked ? '🔓 解放可能' : `🔒 あと${Math.max(0, reward.cost - totalFocusEver)}回`}</span>
+                <h4 class="text-xs sm:text-sm font-bold text-white mt-1.5">${reward.title}</h4>
+              </div>
+              <span class="text-xs font-mono text-amber-300 shrink-0">${reward.cost} 🍅</span>
+            </div>
+          `;
+
+          const btnRow = document.createElement('div');
+          btnRow.className = 'flex items-center justify-between mt-1 pt-2 border-t border-white/10';
+          const claimCount = document.createElement('span');
+          claimCount.className = 'text-[11px] text-white/60';
+          claimCount.textContent = `獲得回数: ${reward.claimedCount || 0}回`;
+
+          const claimBtn = document.createElement('button');
+          claimBtn.type = 'button';
+          claimBtn.disabled = !unlocked;
+          claimBtn.className = unlocked
+            ? 'px-3 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs'
+            : 'px-3 py-1 rounded-lg bg-white/10 text-white/40 font-semibold text-xs cursor-not-allowed';
+          claimBtn.textContent = unlocked ? 'ごほうびを使う 🎉' : '未達成';
+          claimBtn.addEventListener('click', () => {
+            if (!unlocked) return;
+            reward.claimedCount = (reward.claimedCount || 0) + 1;
+            playAlarmChime();
+            saveState();
+            renderRewardsUi();
+            showToast(`「${reward.title}」を獲得しました！`, '🎁');
+          });
+
+          btnRow.appendChild(claimCount);
+          btnRow.appendChild(claimBtn);
+          card.appendChild(btnRow);
+          rewardContainer.appendChild(card);
+        });
+
+        const badges = [
+          { icon: '🌱', name: '最初の一歩', desc: '最初の集中セッションを完了', unlocked: state.timer.counts.focus >= 1 },
+          { icon: '⚡', name: '4スプリント達成', desc: '1サイクル(4回集中)を完走', unlocked: state.timer.counts.focus >= 4 },
+          { icon: '🎯', name: '今日の目標達成', desc: '1日の目標ポモドーロを達成', unlocked: done >= target },
+          { icon: '🔥', name: 'ストリーク継続', desc: '連続ログイン・集中を記録', unlocked: state.streak.days >= 1 },
+          { icon: '🧘', name: '休憩の達人', desc: '小休憩をスキップせず実行', unlocked: state.timer.counts.shortBreak >= 1 },
+          { icon: '🏛️', name: 'ディープワーカー', desc: '累計1時間以上の集中を記録', unlocked: (state.streak.totalFocusSecondsToday || 0) >= 3600 }
+        ];
+
+        const badgeGrid = document.getElementById('challengeBadgesContainer');
+        badgeGrid.innerHTML = '';
+        badges.forEach(b => {
+          const el = document.createElement('div');
+          el.className = `p-3 rounded-xl border flex items-center gap-2.5 transition-all duration-300 ${
+            b.unlocked ? 'bg-rose-500/15 border-rose-400/40' : 'bg-black/25 border-white/10 opacity-50'
+          }`;
+          el.innerHTML = `
+            <div class="text-2xl">${b.icon}</div>
+            <div>
+              <div class="text-xs font-bold text-white">${b.name}</div>
+              <div class="text-[10px] text-white/65">${b.desc}</div>
+            </div>
+          `;
+          badgeGrid.appendChild(el);
+        });
+      }
+
+      // ==================== 60FPS MULTI-LAYER LIVING BACKGROUNDS ====================
+      const canvas = document.getElementById('livingBgCanvas');
+      const ctx = canvas ? canvas.getContext('2d') : null;
+      let particles = [];
+      let bgWavePhase = 0;
+
+      function initParticles() {
+        if (!canvas) return;
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        particles = [];
+        const count = 68;
+        for (let i = 0; i < count; i++) {
+          particles.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            r: Math.random() * 3.0 + 0.9,
+            vx: (Math.random() - 0.5) * 0.55,
+            vy: (Math.random() - 0.5) * 0.55 - 0.25,
+            alpha: Math.random() * 0.65 + 0.2,
+            phase: Math.random() * Math.PI * 2
+          });
+        }
+      }
+
+      function animateLivingBackground() {
+        if (!ctx || !canvas) return;
+        const w = canvas.width;
+        const h = canvas.height;
+        const scene = state.settings.scene || 'castle';
+        bgWavePhase += 0.014;
+
+        ctx.clearRect(0, 0, w, h);
+
+        if (state.settings.activeCustomPhotoIndex === -1) {
+          const grad = ctx.createLinearGradient(0, 0, 0, h);
+          if (scene === 'castle') {
+            grad.addColorStop(0, '#0c0d21');
+            grad.addColorStop(0.5, '#1e1b4b');
+            grad.addColorStop(1, '#090d16');
+          } else if (scene === 'neon') {
+            grad.addColorStop(0, '#160b24');
+            grad.addColorStop(0.5, '#0f172a');
+            grad.addColorStop(1, '#082f49');
+          } else if (scene === 'forest') {
+            grad.addColorStop(0, '#051e16');
+            grad.addColorStop(0.5, '#063628');
+            grad.addColorStop(1, '#081412');
+          } else {
+            grad.addColorStop(0, '#030712');
+            grad.addColorStop(0.5, '#0f172a');
+            grad.addColorStop(1, '#17153b');
+          }
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, w, h);
+
+          // Flowing Aurora / Mist Ribbon Layer
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(0, h * 0.45);
+          for (let x = 0; x <= w; x += 40) {
+            const y = h * 0.45 + Math.sin(x * 0.005 + bgWavePhase) * 28 + Math.cos(x * 0.009 - bgWavePhase * 0.7) * 18;
+            ctx.lineTo(x, y);
+          }
+          ctx.lineTo(w, h);
+          ctx.lineTo(0, h);
+          ctx.closePath();
+          const auroraGrad = ctx.createLinearGradient(0, h * 0.35, 0, h);
+          auroraGrad.addColorStop(0, scene === 'forest' ? 'rgba(16, 185, 129, 0.09)' : 'rgba(244, 63, 94, 0.09)');
+          auroraGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+          ctx.fillStyle = auroraGrad;
+          ctx.fill();
+          ctx.restore();
+
+          if (scene === 'castle') {
+            ctx.fillStyle = 'rgba(12, 15, 30, 0.72)';
+            ctx.beginPath();
+            ctx.moveTo(0, h);
+            ctx.lineTo(0, h * 0.72);
+            ctx.lineTo(w * 0.25, h * 0.65);
+            ctx.lineTo(w * 0.32, h * 0.48);
+            ctx.lineTo(w * 0.35, h * 0.40);
+            ctx.lineTo(w * 0.38, h * 0.48);
+            ctx.lineTo(w * 0.45, h * 0.44);
+            ctx.lineTo(w * 0.48, h * 0.34);
+            ctx.lineTo(w * 0.51, h * 0.44);
+            ctx.lineTo(w * 0.62, h * 0.62);
+            ctx.lineTo(w, h * 0.74);
+            ctx.lineTo(w, h);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+
+        // Smooth 60fps Timer Ring Interpolation while running
+        if (state.timer.running && state.timer.endTimeMs) {
+          const exactSec = Math.max(0, (state.timer.endTimeMs - Date.now()) / 1000);
+          const circle = document.getElementById('timerRingCircle');
+          if (circle && state.timer.totalSec > 0) {
+            const circumference = 716.28;
+            const fraction = exactSec / state.timer.totalSec;
+            circle.style.strokeDashoffset = String(circumference * (1 - fraction));
+          }
+        }
+
+        particles.forEach(p => {
+          p.phase += 0.03;
+          const pulseAlpha = Math.max(0.1, Math.min(0.9, p.alpha + Math.sin(p.phase) * 0.2));
+          if (scene === 'neon') {
+            ctx.strokeStyle = `rgba(56, 189, 248, ${pulseAlpha})`;
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(p.x - 1.5, p.y + 15);
+            ctx.stroke();
+            p.y += 4.8;
+            if (p.y > h) {
+              p.y = -15;
+              p.x = Math.random() * w;
+            }
+          } else {
+            ctx.fillStyle = scene === 'forest'
+              ? `rgba(110, 231, 183, ${pulseAlpha})`
+              : scene === 'castle'
+              ? `rgba(251, 191, 36, ${pulseAlpha})`
+              : `rgba(226, 232, 240, ${pulseAlpha})`;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+            ctx.fill();
+            p.x += p.vx + Math.sin(p.phase * 0.5) * 0.15;
+            p.y += p.vy;
+            if (p.x < 0) p.x = w;
+            if (p.x > w) p.x = 0;
+            if (p.y < 0) p.y = h;
+            if (p.y > h) p.y = 0;
+          }
+        });
+
+        requestAnimationFrame(animateLivingBackground);
+      }
+
+      function renderMediaAndBgUi() {
+        const customBgLayer = document.getElementById('customBgLayer');
+        const idx = state.settings.activeCustomPhotoIndex;
+        if (idx >= 0 && state.customPhotos[idx]) {
+          customBgLayer.style.backgroundImage = `url(${state.customPhotos[idx]})`;
+          customBgLayer.classList.remove('opacity-0');
+          customBgLayer.classList.add('opacity-100');
+        } else {
+          customBgLayer.style.backgroundImage = '';
+          customBgLayer.classList.add('opacity-0');
+          customBgLayer.classList.remove('opacity-100');
+        }
+
+        document.querySelectorAll('.scene-select-btn').forEach(btn => {
+          const s = btn.getAttribute('data-scene');
+          const active = idx === -1 && s === state.settings.scene;
+          btn.style.outline = active ? '2px solid #f43f5e' : 'none';
+        });
+
+        document.getElementById('customPhotoCount').textContent = state.customPhotos.length;
+        const grid = document.getElementById('customPhotosGrid');
+        grid.innerHTML = '';
+        state.customPhotos.forEach((dataUrl, i) => {
+          const wrap = document.createElement('div');
+          wrap.className = `relative h-14 rounded-xl overflow-hidden border cursor-pointer ${
+            idx === i ? 'border-rose-400 ring-2 ring-rose-500' : 'border-white/15'
+          }`;
+          wrap.innerHTML = `<img src="${dataUrl}" alt="カスタム背景" class="w-full h-full object-cover" />`;
+          wrap.addEventListener('click', () => {
+            state.settings.activeCustomPhotoIndex = i;
+            saveState();
+            renderMediaAndBgUi();
+            showToast('カスタム背景写真を適用しました', '🖼️');
+          });
+
+          const del = document.createElement('button');
+          del.type = 'button';
+          del.className = 'absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-[10px] text-white flex items-center justify-center';
+          del.textContent = '✕';
+          del.addEventListener('click', (e) => {
+            e.stopPropagation();
+            state.customPhotos.splice(i, 1);
+            if (state.settings.activeCustomPhotoIndex === i) {
+              state.settings.activeCustomPhotoIndex = -1;
+            }
+            saveState();
+            renderMediaAndBgUi();
+          });
+          wrap.appendChild(del);
+          grid.appendChild(wrap);
+        });
+      }
+
+      function renderSettingsUi() {
+        document.getElementById('inputFocusMin').value = state.settings.focusMin;
+        document.getElementById('inputShortBreakMin').value = state.settings.shortBreakMin;
+        document.getElementById('inputLongBreakMin').value = state.settings.longBreakMin;
+        document.getElementById('toggleAutoStartBreak').checked = !!state.settings.autoStartBreak;
+        document.getElementById('toggleAutoStartFocus').checked = !!state.settings.autoStartFocus;
+        document.getElementById('toggleAutoBgm').checked = !!state.settings.autoBgm;
+        document.getElementById('sliderBgmVolume').value = state.settings.bgmVolume;
+        document.getElementById('bgmVolumeValue').textContent = `${state.settings.bgmVolume}%`;
+        applySafeTopOffset();
+      }
+
+      function renderAll() {
+        renderTimerUi();
+        renderTasksUi();
+        renderRewardsUi();
+        renderMediaAndBgUi();
+        renderSettingsUi();
+        updateAudioUi();
+        renderLiveArtworkAndPipCanvas(state.timer.remainingSec);
+      }
+
+      // ==================== EVENT LISTENERS ====================
+      function initEvents() {
+        // Tab bar switching with smooth sliding glass pill & spring view animation
+        const slidingPill = document.getElementById('tabSlidingPill');
+        document.querySelectorAll('.tab-nav-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const targetTab = btn.getAttribute('data-tab');
+            const tabIdx = Number(btn.getAttribute('data-tab-idx') || 0);
+            if (slidingPill) {
+              slidingPill.style.transform = `translateX(${tabIdx * 100}%)`;
+            }
+
+            ['timer', 'tasks', 'rewards', 'media', 'settings'].forEach(tab => {
+              const sec = document.getElementById(`view-${tab}`);
+              if (sec) {
+                if (tab === targetTab) {
+                  sec.classList.remove('hidden');
+                  sec.classList.remove('ios-tab-view');
+                  void sec.offsetWidth; // trigger spring enter animation
+                  sec.classList.add('ios-tab-view');
+                } else {
+                  sec.classList.add('hidden');
+                }
+              }
+            });
+
+            document.querySelectorAll('.tab-nav-btn').forEach(b => {
+              const isMatch = b.getAttribute('data-tab') === targetTab;
+              b.className = isMatch
+                ? 'tab-nav-btn relative z-10 flex-1 py-2 rounded-2xl flex flex-col items-center gap-0.5 text-rose-400 transition-colors duration-300'
+                : 'tab-nav-btn relative z-10 flex-1 py-2 rounded-2xl flex flex-col items-center gap-0.5 text-white/60 hover:text-white transition-colors duration-300';
+            });
+          });
+        });
+
+        document.getElementById('btnJumpToTasks').addEventListener('click', () => {
+          const taskTabBtn = document.querySelector('.tab-nav-btn[data-tab="tasks"]');
+          if (taskTabBtn) taskTabBtn.click();
+        });
+
+        document.querySelectorAll('.mode-switch-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const m = btn.getAttribute('data-mode');
+            switchMode(m, false);
+          });
+        });
+
+        document.getElementById('btnStartPause').addEventListener('click', () => {
+          if (state.timer.running) pauseTimer();
+          else startTimer();
+        });
+        document.getElementById('btnResetTimer').addEventListener('click', resetTimer);
+        document.getElementById('btnSkipSession').addEventListener('click', completeCurrentSession);
+
+        // Liquid Morphing Dynamic Island Expand / Collapse
+        const island = document.getElementById('dynamicIsland');
+        const islandExp = document.getElementById('dynamicIslandExpanded');
+        island.addEventListener('click', () => {
+          const isCollapsed = islandExp.classList.contains('island-drawer-collapsed');
+          if (isCollapsed) {
+            islandExp.classList.remove('island-drawer-collapsed');
+            islandExp.classList.add('island-drawer-open');
+          } else {
+            islandExp.classList.add('island-drawer-collapsed');
+            islandExp.classList.remove('island-drawer-open');
+          }
+        });
+        document.getElementById('btnIslandCollapse').addEventListener('click', () => {
+          islandExp.classList.add('island-drawer-collapsed');
+          islandExp.classList.remove('island-drawer-open');
+        });
+        document.getElementById('btnIslandToggleTimer').addEventListener('click', () => {
+          if (state.timer.running) pauseTimer();
+          else startTimer();
+        });
+        document.getElementById('btnIslandSkip').addEventListener('click', completeCurrentSession);
+
+        // Home Screen Live Display (PiP + Hardware Dynamic Island MediaSession)
+        document.getElementById('btnPipLiveToggle').addEventListener('click', togglePictureInPictureLiveTimer);
+        document.getElementById('btnIslandPipBtn').addEventListener('click', togglePictureInPictureLiveTimer);
+
+        // Safe Area Top Offset Adjusters
+        document.getElementById('btnSafeTopDec').addEventListener('click', () => {
+          state.settings.extraTopOffsetPx = Math.max(-24, Number(state.settings.extraTopOffsetPx || 0) - 4);
+          applySafeTopOffset();
+          saveState();
+        });
+        document.getElementById('btnSafeTopInc').addEventListener('click', () => {
+          state.settings.extraTopOffsetPx = Math.min(64, Number(state.settings.extraTopOffsetPx || 0) + 4);
+          applySafeTopOffset();
+          saveState();
+        });
+
+        // Quotes cycle
+        document.getElementById('btnNextQuote').addEventListener('click', () => {
+          quoteIndex = (quoteIndex + 1) % QUOTES.length;
+          const q = QUOTES[quoteIndex];
+          const qEl = document.getElementById('quoteText');
+          qEl.style.opacity = '0';
+          setTimeout(() => {
+            qEl.textContent = q;
+            qEl.style.opacity = '1';
+          }, 180);
+          document.getElementById('standbyQuote').textContent = q;
+        });
+
+        // Quick BGM button
+        document.getElementById('btnQuickBgmToggle').addEventListener('click', toggleOfflineBgm);
+        document.getElementById('btnMasterAudioToggle').addEventListener('click', toggleOfflineBgm);
+        document.getElementById('btnTestAlarmChime').addEventListener('click', () => {
+          playAlarmChime();
+          showToast('シンギングボウル・アラームを試聴中', '🔔');
+        });
+
+        // Sound preset selector
+        document.querySelectorAll('.sound-preset-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            state.settings.soundPreset = btn.getAttribute('data-sound');
+            saveState();
+            if (bgmPlaying) startOfflineBgm();
+            else updateAudioUi();
+          });
+        });
+
+        // Volume slider
+        document.getElementById('sliderBgmVolume').addEventListener('input', (e) => {
+          const val = Number(e.target.value);
+          state.settings.bgmVolume = val;
+          document.getElementById('bgmVolumeValue').textContent = `${val}%`;
+          const bgAudio = document.getElementById('iosBgAudioElement');
+          if (bgAudio) {
+            bgAudio.volume = Math.max(0.02, Math.min(1, val / 100));
+          }
+          saveState();
+        });
+
+        // Living Scene selector
+        document.querySelectorAll('.scene-select-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            state.settings.scene = btn.getAttribute('data-scene');
+            state.settings.activeCustomPhotoIndex = -1;
+            saveState();
+            renderMediaAndBgUi();
+            showToast('生きた背景シーンを切り替えました', '🌌');
+          });
+        });
+
+        // Custom Background Photo Upload
+        document.getElementById('inputUploadBgPhoto').addEventListener('change', (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+          if (state.customPhotos.length >= 8) {
+            showToast('写真は最大8枚まで保存できます', '⚠️');
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const img = new Image();
+            img.onload = () => {
+              const offCanvas = document.createElement('canvas');
+              const maxDim = 960;
+              let w = img.width;
+              let h = img.height;
+              if (w > maxDim || h > maxDim) {
+                if (w > h) {
+                  h = Math.round((h * maxDim) / w);
+                  w = maxDim;
+                } else {
+                  w = Math.round((w * maxDim) / h);
+                  h = maxDim;
+                }
+              }
+              offCanvas.width = w;
+              offCanvas.height = h;
+              const octx = offCanvas.getContext('2d');
+              octx.drawImage(img, 0, 0, w, h);
+              const compressedDataUrl = offCanvas.toDataURL('image/jpeg', 0.78);
+              state.customPhotos.push(compressedDataUrl);
+              state.settings.activeCustomPhotoIndex = state.customPhotos.length - 1;
+              saveState();
+              renderMediaAndBgUi();
+              showToast('写真を端末内にオフライン保存しました', '📷');
+            };
+            img.src = ev.target.result;
+          };
+          reader.readAsDataURL(file);
+        });
+
+        // Add Task Form
+        document.getElementById('formAddTask').addEventListener('submit', (e) => {
+          e.preventDefault();
+          const titleInput = document.getElementById('inputTaskTitle');
+          const parentSelect = document.getElementById('selectParentTask');
+          const estInput = document.getElementById('inputTaskEst');
+          const title = titleInput.value.trim();
+          if (!title) return;
+
+          const newTask = {
+            id: 't_' + Date.now(),
+            title,
+            parentId: parentSelect.value || '',
+            estPomodoros: Math.max(1, Number(estInput.value) || 1),
+            completedPomodoros: 0,
+            trackedSeconds: 0,
+            completed: false
+          };
+          state.tasks.push(newTask);
+          state.focusedTaskId = newTask.id;
+          titleInput.value = '';
+          saveState();
+          renderTimerUi();
+          renderTasksUi();
+          showToast('タスクを追加し、集中対象に設定しました', '☑️');
+        });
+
+        document.querySelectorAll('.task-filter-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            state.taskFilter = btn.getAttribute('data-task-filter');
+            saveState();
+            renderTasksUi();
+          });
+        });
+
+        document.getElementById('btnClearCompletedTasks').addEventListener('click', () => {
+          state.tasks = state.tasks.filter(t => !t.completed);
+          saveState();
+          renderTasksUi();
+          showToast('完了済みタスクを整理しました', '🧹');
+        });
+
+        document.getElementById('btnGoalDec').addEventListener('click', () => {
+          state.streak.dailyGoalTarget = Math.max(1, state.streak.dailyGoalTarget - 1);
+          saveState();
+          renderRewardsUi();
+        });
+        document.getElementById('btnGoalInc').addEventListener('click', () => {
+          state.streak.dailyGoalTarget = Math.min(24, state.streak.dailyGoalTarget + 1);
+          saveState();
+          renderRewardsUi();
+        });
+
+        document.getElementById('formAddReward').addEventListener('submit', (e) => {
+          e.preventDefault();
+          const titleEl = document.getElementById('inputRewardTitle');
+          const costEl = document.getElementById('inputRewardCost');
+          const title = titleEl.value.trim();
+          if (!title) return;
+          state.rewards.push({
+            id: 'r_' + Date.now(),
+            title,
+            cost: Math.max(1, Number(costEl.value) || 4),
+            claimedCount: 0
+          });
+          titleEl.value = '';
+          saveState();
+          renderRewardsUi();
+          showToast('新しいごほうびを追加しました', '🎁');
+        });
+
+        document.getElementById('btnSaveSettings').addEventListener('click', () => {
+          state.settings.focusMin = Math.max(1, Math.min(120, Number(document.getElementById('inputFocusMin').value) || 25));
+          state.settings.shortBreakMin = Math.max(1, Math.min(60, Number(document.getElementById('inputShortBreakMin').value) || 5));
+          state.settings.longBreakMin = Math.max(1, Math.min(90, Number(document.getElementById('inputLongBreakMin').value) || 15));
+          state.settings.autoStartBreak = document.getElementById('toggleAutoStartBreak').checked;
+          state.settings.autoStartFocus = document.getElementById('toggleAutoStartFocus').checked;
+          state.settings.autoBgm = document.getElementById('toggleAutoBgm').checked;
+
+          if (!state.timer.running) {
+            const newDur = getDurationForMode(state.timer.mode);
+            state.timer.totalSec = newDur;
+            state.timer.remainingSec = newDur;
+          }
+          saveState();
+          renderAll();
+          showToast('タイマー設定を保存しました', '⚙️');
+        });
+
+        const standbyOverlay = document.getElementById('standbyOverlay');
+        document.getElementById('btnStandbyOpen').addEventListener('click', () => {
+          standbyOverlay.classList.remove('hidden');
+        });
+        document.getElementById('btnStandbyClose').addEventListener('click', () => {
+          standbyOverlay.classList.add('hidden');
+        });
+        document.getElementById('btnStandbyPlayPause').addEventListener('click', () => {
+          if (state.timer.running) pauseTimer();
+          else startTimer();
+        });
+
+        document.getElementById('btnDeviceFrameToggle').addEventListener('click', () => {
+          narrowFrameMode = !narrowFrameMode;
+          const mainEl = document.getElementById('appMainContainer');
+          const labelEl = document.getElementById('deviceFrameLabel');
+          if (narrowFrameMode) {
+            mainEl.classList.remove('max-w-2xl');
+            mainEl.classList.add('max-w-[410px]');
+            labelEl.textContent = '📱 iPhone枠: 固定';
+          } else {
+            mainEl.classList.add('max-w-2xl');
+            mainEl.classList.remove('max-w-[410px]');
+            labelEl.textContent = '📱 iPhone枠: 自動';
+          }
+        });
+
+        const dataModal = document.getElementById('dataModal');
+        const jsonArea = document.getElementById('textareaJsonData');
+        document.getElementById('btnExportData').addEventListener('click', () => {
+          jsonArea.value = JSON.stringify(state, null, 2);
+          dataModal.classList.remove('hidden');
+        });
+        document.getElementById('btnCloseDataModal').addEventListener('click', () => {
+          dataModal.classList.add('hidden');
+        });
+        document.getElementById('btnCopyJson').addEventListener('click', () => {
+          jsonArea.select();
+          try {
+            document.execCommand('copy');
+            showToast('JSONデータをクリップボードにコピーしました', '📋');
+          } catch (e) {}
+        });
+        document.getElementById('btnImportJson').addEventListener('click', () => {
+          try {
+            const parsed = JSON.parse(jsonArea.value);
+            if (parsed && parsed.settings && parsed.timer) {
+              state = parsed;
+              saveState();
+              renderAll();
+              dataModal.classList.add('hidden');
+              showToast('データを復元しました', '✅');
+            }
+          } catch (err) {
+            showToast('JSONの形式が正しくありません', '⚠️');
+          }
+        });
+
+        document.getElementById('btnResetAllData').addEventListener('click', () => {
+          pauseTimer(false);
+          state = JSON.parse(JSON.stringify(DEFAULT_STATE));
+          saveState();
+          renderAll();
+          showToast('初期状態にリセットしました', '🔄');
+        });
+
+        window.addEventListener('resize', initParticles);
+      }
+
+      function updateStatusBarClock() {
+        const now = new Date();
+        const hh = String(now.getHours()).padStart(2, '0');
+        const mm = String(now.getMinutes()).padStart(2, '0');
+        const el = document.getElementById('iosStatusClock');
+        if (el) el.textContent = `${hh}:${mm}`;
+      }
+
+      // ==================== INITIALIZATION ====================
+      window.addEventListener('load', () => {
+        checkDailyStreakRollover();
+        applySafeTopOffset();
+        initParticles();
+        animateLivingBackground();
+        initEvents();
+        setupMediaSessionHandlers();
+        updateStatusBarClock();
+        setInterval(updateStatusBarClock, 15000);
+        recoverRunningTimerOnBoot();
+        renderAll();
+      });
+    })();
+  </script>
+</body>
+</html>
